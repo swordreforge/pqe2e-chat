@@ -3,21 +3,17 @@
 <!--
   pqe2e-chat · 抗量子端到端加密聊天（浏览器演示端）
   视觉规范：Notion Style（米色 #f7f6f3 底、微边框、Block Highlighting、Drag Handle Illusion、
-  无渐变/无大圆角/无 translate/scale 动画）。离线演示注意：Tailwind 走 CDN，需缓存或改本地副本。
+  无渐变/无大圆角/无 translate/scale 动画）。
+  样式 = 本地依赖构建（web/tw-src.css → /tw.css，pnpm web:css），零外部 CDN/字体引用。
 -->
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>pqe2e-chat · 抗量子端到端加密</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: { extend: { colors: { notion: { bg: '#f7f6f3', hover: '#efedea', active: '#e3e1db', text: '#37352f', blue: '#2eaadc', red: '#eb5757', green: '#0f7b6c' } } } },
-    };
-  </script>
+  <link rel="stylesheet" href="/tw.css" />
   <style>
     body { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif; }
-    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
   </style>
 </head>
 <body class="h-full bg-[#f7f6f3] text-[#37352f]">

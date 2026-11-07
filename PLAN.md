@@ -138,9 +138,10 @@
 - [x] **浏览器前端（P2.2 · Notion Style）**：`web/` 复用全部纯协议模块
       （fs 经 esbuild alias → 内存垫片；身份/trust/锚定走 localStorage argon2id 信封），
       支持注册、1:1（混合 PQXDH+M4）、群聊创建/收发（epoch 声明制全流程）、
-      目录四层验证；UI 按 Notion 令牌（#f7f6f3 底、#efedea hover、⋮⋮ 拖柄幻影、
-      无渐变/无大圆角/无 translate/scale 动画/reduced-motion 位）。静态资源由
-      中继服务器同端口挂载（含目录穿越防护）。
+      目录四层验证；**零外部 CDN**——Tailwind v4 npm 本地构建（NOTES #14），
+      UI 按 Notion 令牌（#f7f6f3 底、#efedea hover、⋮⋮ 拖柄幻影、无渐变/无大圆角/
+      无 translate/scale 动画/reduced-motion 位）。静态资源由中继服务器同端口
+      挂载（含目录穿越防护、UI 装配自检 NOTES #13）。
 - [ ] （未实现·P2.3）真链 Provider（测试网 ENS 合约调用；需 RPC + 资金私钥，
       接口缝线已留）；浏览器锚定跨设备账本共识
 

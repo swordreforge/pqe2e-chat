@@ -245,7 +245,8 @@ UI 按 Notion Style 令牌实现：`#f7f6f3` 底、`#efedea`/`#e3e1db` hover/act
 4. P1.2：建群 claims 2/3→3/3→epoch1 apply；kick → epoch2 仅剩成员收发；被踢者拒收；
 5. P2.1：3 块锚定账本（哈希链+签名）、merkle root 打印、"not yet anchored"→锚定 match；
    篡改账本 → owner 重发布自愈；
-6. P2.2：`pnpm web:build`（332KB bundle）→ 同端口静态挂载、404/穿越防护、CLI↔浏览器同帧互通。
+6. P2.2：`pnpm web:build`（334KB bundle + Minified tw.css，**零外部 CDN**）→ 同端口
+   静态挂载、404/穿越防护、UI 装配自检（NOTES #13）、外部引用计数=0 验证（NOTES #14）。
 
 ## 7. 工程实践资产
 
@@ -274,7 +275,8 @@ UI 按 Notion Style 令牌实现：`#f7f6f3` 底、`#efedea`/`#e3e1db` hover/act
    入群成员必须在线应答 roll（6s 窗口，缺席即弃）。
 6. **旁路安全**：无内存密钥擦除（zeroize）、无 RNG 独立性论证、无防故障注入；
    已覆盖恒时比较与 fail-closed 错误处理面。
-7. **浏览器端**：锚定账本本机视角（见 §6.1）；Tailwind 与 PQC 资源走 CDN（离线需缓存）；
+7. **浏览器端**：锚定账本本机视角（见 §6.1）；样式与 bundle 已是**零外部 CDN 的本地
+   产物**（Tailwind v4 本地构建，NOTES #14），限界剩余：浏览器端 UI 未做 add/kick。
    UI 未做 add/kick 按钮（CLI 全量可用，浏览器被动流转全通）。
 8. **单主机范围**：分布式部署、对抗性 fuzz、正式协议形式化验证（ProVerif 级）均在范围外。
 
@@ -283,7 +285,7 @@ UI 按 Notion Style 令牌实现：`#f7f6f3` 底、`#efedea`/`#e3e1db` hover/act
 ```bash
 pnpm install                              # 版本钉死（TOOLCHAIN.md）
 pnpm typecheck && pnpm test               # 7 文件 73 用例
-pnpm web:build                            # 仅浏览器演示需要
+pnpm web:build                            # css+bundle 本地构建（零外部 CDN）
 pnpm server                               # http://localhost:9090（WS 同端口；先 fuser -k 清残留）
 
 # CLI 端（多终端）

@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "web:build": "esbuild web/main.ts --bundle --format=iife --outfile=web/bundle.js --sourcemap --alias:node:fs=./web/fsshim.ts --alias:node:path=./web/fsshim.ts --alias:node:crypto=./web/fsshim.ts --log-level=warning"
+    "web:build": "pnpm web:css && esbuild web/main.ts --bundle --format=iife --outfile=web/bundle.js --sourcemap --alias:node:fs=./web/fsshim.ts --alias:node:path=./web/fsshim.ts --alias:node:crypto=./web/fsshim.ts --log-level=warning",
+    "web:css": "tailwindcss -i web/tw-src.css -o web/tw.css --minify"
   },
   "dependencies": {
     "@noble/ciphers": "2.4.0",
@@ -25,9 +26,11 @@
     "ws": "8.22.1"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "4.3.4",
     "@types/node": "26.6.6",
     "@types/ws": "8.18.2",
     "esbuild": "0.28.2",
+    "tailwindcss": "4.3.4",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.1.0"

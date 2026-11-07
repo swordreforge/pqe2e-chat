@@ -136,3 +136,14 @@
   打上时间线与控制台，不再静默。另给 esbuild 加 `--sourcemap`，下次报错行号直通源码。
 - 教训/复用：**浏览器 bundle 的 UI 故障先查"页面与 bundle 版本配对"**；交付形态必须
   自带装配自检（配置校验是前端的 healthcheck）。
+
+### 14 样式零外链改造：Tailwind CDN → npm 依赖本地构建（P2.2 追加）        （2026-11-07）
+- 动因：用户裁决"只允许加依赖、不导入外部 CDN"——#13 所提"离线需缓存"的隐患应根治。
+- 修复：`tailwindcss@4.3.4 + @tailwindcss/cli@4.3.4` 本地依赖；`web:css` 脚本本地构建
+  → `/tw.css`；页面里 CDN `<script>` 与内联 config 移除，签名改为纯 arbitrary-value
+  class（v4 自动内容扫描，无需 JS 配置）；`pnpm web:build` 一并产出 css+bundle。
+- 验证：页面外部 URL 引用计数 = 0（curl grep）＋ `/tw.css` 200 ＋ Notion tokens
+  （#f7f6f3/#efedea…）在产物内出现。
+- 教训/复用：**交付物的"离线可演示"应当作验收标准**（本项目候选真 ENS 都要 RPC，
+  UI 至少做到零外网依赖）；verdaccio 式"依赖进锁文件、资源进产物"在课程展示同样适用。
+  新增依赖注意 pnpm 12 的 `allowBuilds` 白名单（@parcel/watcher 已加，见 TOOLCHAIN.md）。
