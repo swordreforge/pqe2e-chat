@@ -31,6 +31,10 @@ export type Wire =
   | { kind: 'invite'; from: string; to: string; ephX: string; kem: string }
   /** M4 棘轮帧：每条消息独立轮换密钥 */
   | { kind: 'msg'; from: string; to: string; v: 4; seq: number; nonce: string; ct: string }
+  /** P1 群控制帧（走 pairwise 通道；服务器不解内容） */
+  | { kind: 'cntl'; from: string; to: string; v: 4; seq: number; nonce: string; ct: string }
+  /** P1 群文本帧（GChain 群密文，服务器按 to 单播） */
+  | { kind: 'gmsg'; from: string; to: string; gid: string; v: 4; seq: number; nonce: string; ct: string }
   | { kind: 'error'; reason: string };
 
 export const b64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString('base64');
@@ -74,6 +78,16 @@ export function parseWire(data: string): Wire {
     case 'msg':
       if (isStr(w.from) && isStr(w.to) && w.v === 4 && isSafeSeq(w.seq) && isStr(w.nonce) && isStr(w.ct)) {
         return { kind: 'msg', from: w.from, to: w.to, v: 4, seq: w.seq, nonce: w.nonce, ct: w.ct };
+      }
+      break;
+    case 'cntl':
+      if (isStr(w.from) && isStr(w.to) && w.v === 4 && isSafeSeq(w.seq) && isStr(w.nonce) && isStr(w.ct)) {
+        return { kind: 'cntl', from: w.from, to: w.to, v: 4, seq: w.seq, nonce: w.nonce, ct: w.ct };
+      }
+      break;
+    case 'gmsg':
+      if (isStr(w.from) && isStr(w.to) && isStr(w.gid) && w.v === 4 && isSafeSeq(w.seq) && isStr(w.nonce) && isStr(w.ct)) {
+        return { kind: 'gmsg', from: w.from, to: w.to, gid: w.gid, v: 4, seq: w.seq, nonce: w.nonce, ct: w.ct };
       }
       break;
     case 'error':

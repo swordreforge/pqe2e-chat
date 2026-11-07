@@ -58,9 +58,11 @@ wss.on('connection', (ws) => {
         broadcastDir();
         break;
       }
-      // invite 与 msg 一视同仁：密文端到端，服务器只看 to 路由
+      // 棘轮密文/群控制/群文本一视同仁：密文端到端，服务器只看 to 路由
       case 'invite':
-      case 'msg': {
+      case 'msg':
+      case 'cntl':
+      case 'gmsg': {
         const dst = roster.get(wire.to);
         if (!dst || dst.sock.readyState !== WebSocket.OPEN) {
           ws.send(JSON.stringify({ kind: 'error', reason: `peer '${wire.to}' not online` }));

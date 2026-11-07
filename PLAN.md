@@ -117,7 +117,11 @@
 - [x] 会话持久化（P0）：M4 链位置/乱序缓存/离线队列进 argon2id 加密信封
       （`persistence.test` 11 例：恢复续链/重放语义不变/信封 fail-closed）
 - [x] 重启零丢失（P0）：冒烟 seq0→1→2 连续，无重握手无 drop；离线帧自动补发
-- [ ] （未实现·P3）群聊（MLS 思路）
+- [x] 群聊 MLS-lite（P1）：GChain 群链 + epoch 成员/种子环旋转（加入成员需在线接收
+      新 epoch；踢人后旧链 fail-closed，被踢者新消息当场拒收——冒烟实证）
+      （`group.test` 12+2 例：副本消费/乱序/重放/rotation 闸门/snapshot）
+- [ ] （未实现·P2）真实链上锚定（测试网 ENS）/ 目录 merkle 化
+- [ ] （未实现·P2）浏览器前端（可选加分项）
 
 ## 5. 测试与验证清单
 

@@ -43,7 +43,17 @@
      chain_{i+1} = SHA256(mk_i‖MK_NEXT)             AAD ‖ from‖to‖seq
 ```
 
-模块与行数规模：`codec/identity/channel/m4/attestation/trust/server/client + version` 约 750 行 TS（不含注释与测试 300 行）。
+模块与行数规模：`codec/identity/channel/m4/gchain/ggroup/attestation/trust/keystore/server/client + version` 约 1050 行 TS（不含注释与测试 350 行）。
+
+### 2.1 群聊层（P1 · MLS-lite）
+
+- **GChain（群链）**：每成员一条对称棘轮链 `mk_i = SHA256(chain_i‖MK)`，seed 经
+  pairwise E2EE 分发副本，N 人共同消费同一流；AAD 绑定 `gid|sender`。
+- **epoch（成员治理，唯一端侧权限角色 = creator）**：成员表 + 全新种子环整轮替换
+  （入群/踢人都旋转全员）→ 踢人后旧链 fail-closed（被踢者**新消息当场拒收**，冒烟实证）；
+  epoch 血线校验：creator 一致 / ep 严格递增 / ring 覆盖全员。
+- 控制面复用 pairwise M4 通道（新增 `cntl` 帧）；群文本 `gmsg` 帧 GChain 直密封、服务器按 to 单播；
+- 群状态持久化与 pairwise 会话同信封（`sessions_<user>.enc` 的 `groups` 字段）。
 
 ## 3. 威胁模型 → 机制 → 测试 映射表（论文核心论据）
 
@@ -89,7 +99,9 @@
 4. **密钥落盘已整定加密（P0 已解决）**：identity/会话状态均进 argon2id 信封
    （m=8MiB、t=2 折中参数；生产建议 m≥19MiB、t≥3）；trust.json 仅存公钥故仍明文；
    口令回显可见（课程语境限制），生产应 using no-echo getpass。
-5. **群聊未做**：双会话架构可直接演进到 MLS(RFC 9420) 树状密钥树，但未实现。
+5. **群聊 MLS-lite（P1 已实现，与真 MLS 的差距）**：seed 由 **creator 代生成**（MLS 为叶自造
+   → creator 可冒充他人群消息，属诚实限界）；被踢者不获通知（静默失能）；入群成员必须
+   在线接收 epoch（离线入群需重发）；无正式 RFC 9420 的 tree-KEM 与双棘轮路径更新。
 6. **旁路安全边界**：内存密钥擦除（zeroize）、RNG 独立性论证、防故障注入未覆盖；
    已覆盖的是恒时比较惯例与 fail-closed 的错误处理面。
 
@@ -99,9 +111,11 @@
 pnpm install        # 版本钉死（TOOLCHAIN.md）
 pnpm typecheck && pnpm test
 pnpm server                          # 终端1（先 fuser -k 9090/tcp 清残留）
-pnpm client -- alice                 # 终端2
-pnpm client -- bob                   # 终端3（另一种在线场景见 PLAN.md §4.1）
-# 抓包演示：tcpdump -i lo port 9090 -X | grep -v "^\s*$" —— 全程 base64 密文
+PQE2E_PASS=... pnpm client -- alice  # 终端2；bob/carl 同理（口令=设备解锁密钥）
+# 1:1 聊天：直接输入一行 → 自动逐对端加密群发
+# 群聊（P1）：#g help / #g create <gid> <name> <成员...> / #<gid> <text>
+#            #g add <gid> <m>（creator·新成员须在线）/ #g kick <gid> <m> / #g list
+# 抓包演示：tcpdump -i lo port 9090 -X —— 全程 base64 密文（msg/cntl/gmsg 均不可读）
 ```
 
 ## 8. 后续工作（对 PLAN.md §7 的优先级复述）

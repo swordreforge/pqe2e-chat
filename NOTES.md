@@ -114,3 +114,12 @@
 - 教训/复用：**逐消息推进的密码学状态必须在"每次使用后"持久化**（写放大是安全的正代价）；
   调试手段：用同一口令脚本化解剖自己的加密 store 验证状态字段（fail-closed 设计
   反过来帮了定位——只有真同事能读懂）。
+
+### 12 群 epoch 成员表不去重 → creator 在新成员表重复出现（功能级）      （2026-11-07 · P1）
+- 现象：`#g kick room1 carl` 后 epoch 日志显示 `members=alice,alice,bob`；
+  dispatchEpoch 报 "members=3"（实际 2 人）。
+- 根因：`newEpochRoster` 里 `[...members, creator]` 直接拼接（creator 已在 members 里），
+  忘了 Set 去重；group 状态靠 Map 键天然去重掩盖了此错误。
+- 修复：`[...new Set([...members, creator])].sort()`。
+- 教训/复用：**去重在"数据结构入口"做，别在各消费点祈祷**；群成员表是集合语义
+  而列表语义，排序只用做展示与确定性编码。
