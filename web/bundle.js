@@ -8909,7 +8909,38 @@
     timeline.push({ t: (/* @__PURE__ */ new Date()).toLocaleTimeString(), kind: "warn", peer: currentTarget ?? "*", text });
     renderTimeline();
   };
-  $("connect").addEventListener("click", () => {
+  var REQUIRED_IDS = [
+    "dot",
+    "st-text",
+    "merkle",
+    "srv",
+    "username",
+    "pass",
+    "connect",
+    "roster-list",
+    "group-list",
+    "g-gid",
+    "g-name",
+    "g-members",
+    "g-create",
+    "target-label",
+    "timeline",
+    "chat-input",
+    "send"
+  ];
+  function assertIds() {
+    const missing = REQUIRED_IDS.filter((id2) => document.getElementById(id2) === null);
+    if (missing.length > 0) {
+      console.error(`[ui] missing element ids (\u9875\u9762\u4E0E bundle \u5931\u914D?): ${missing.join(", ")}`);
+      document.body.insertAdjacentHTML(
+        "afterbegin",
+        `<div class="bg-[#eb5757] text-white text-sm px-4 py-2">UI \u88C5\u914D\u5931\u8D25\uFF1A\u9875\u9762\u7F3A\u5C11\u5143\u7D20 ${missing.join(", ")} \u2014 \u8BF7\u786C\u5237\u65B0\uFF08Ctrl+Shift+R\uFF09\u6216\u91CD\u5EFA bundle\uFF08pnpm web:build\uFF09</div>`
+      );
+      return false;
+    }
+    return true;
+  }
+  function onConnect() {
     try {
       const url = ($("#srv").value || "ws://localhost:9090").trim();
       selfUser = ($("#username").value || "").trim();
@@ -8944,7 +8975,16 @@
     } catch (e) {
       logWarn(`boot failed: ${e.message}`);
     }
-  });
+  }
+  function safe(fn) {
+    try {
+      fn();
+    } catch (e) {
+      const msg = e.message ?? String(e);
+      console.error("[ui]", e);
+      logWarn(`UI error: ${msg}`);
+    }
+  }
   function setConnected(ok) {
     $("dot").className = ok ? "bg-[#0f7b6c]" : "bg-[#eb5757]";
     $("st-text").textContent = ok ? `\u5DF2\u8FDE\u63A5 \xB7 ${selfUser}` : "\u672A\u8FDE\u63A5";
@@ -9259,11 +9299,7 @@
     }
     logWarn(`unknown control payload (fail-closed)`);
   }
-  $("send").addEventListener("click", () => onSend());
-  $("chat-input").addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") onSend();
-  });
-  $("g-create").addEventListener("click", () => {
+  function onCreateGroup() {
     const gid = ($("#g-gid").value || "").trim();
     const name = ($("#g-name").value || "").trim();
     const members = ($("#g-members").value || "").split(",").map((s) => s.trim()).filter((s) => s.length > 0);
@@ -9277,7 +9313,24 @@
       return;
     }
     startRoll(gid, name, 1, [.../* @__PURE__ */ new Set([selfUser, ...members])].sort(), members);
-  });
+  }
+  function initUI() {
+    if (!assertIds()) return;
+    $("connect").addEventListener("click", () => safe(onConnect));
+    $("send").addEventListener("click", () => safe(onSend));
+    $("chat-input").addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") safe(onSend);
+    });
+    $("g-create").addEventListener("click", () => safe(onCreateGroup));
+    $("target-label").textContent = "\uFF08\u672A\u9009\u62E9\u4F1A\u8BDD \u2014 \u5DE6\u4FA7\u9009\u62E9\u8054\u7CFB\u4EBA\u6216\u7FA4\uFF09";
+    renderRoster();
+    renderTimeline();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initUI);
+  } else {
+    initUI();
+  }
   function onSend() {
     const input = $("chat-input");
     const text = input.value.trim();
@@ -9416,3 +9469,4 @@ buffer/index.js:
 @noble/ciphers/utils.js:
   (*! noble-ciphers - MIT License (c) 2023 Paul Miller (paulmillr.com) *)
 */
+//# sourceMappingURL=bundle.js.map

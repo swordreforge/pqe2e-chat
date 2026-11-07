@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "web:build": "esbuild web/main.ts --bundle --format=iife --outfile=web/bundle.js --alias:node:fs=./web/fsshim.ts --alias:node:path=./web/fsshim.ts --alias:node:crypto=./web/fsshim.ts --log-level=warning"
+    "web:build": "esbuild web/main.ts --bundle --format=iife --outfile=web/bundle.js --sourcemap --alias:node:fs=./web/fsshim.ts --alias:node:path=./web/fsshim.ts --alias:node:crypto=./web/fsshim.ts --log-level=warning"
   },
   "dependencies": {
     "@noble/ciphers": "2.4.0",

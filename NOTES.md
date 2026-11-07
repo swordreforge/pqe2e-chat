@@ -123,3 +123,16 @@
 - 修复：`[...new Set([...members, creator])].sort()`。
 - 教训/复用：**去重在"数据结构入口"做，别在各消费点祈祷**；群成员表是集合语义
   而列表语义，排序只用做展示与确定性编码。
+
+### 13 浏览器 UI 装配的"bundle/DOM 失配"故障类                 （2026-11-07 · P2.2）
+- 现象：用户点击按钮 → `Cannot read properties of null (reading 'value')`（bundle 行号
+  对应 g-create handler 读 `#g-gid`）；本地 DOM 检查 id 全在，难以从行号直判。
+- 根因：**脚本与页面 DOM 的装配时序/缓存失配**类故障——顶层立即绑定，浏览器可能以
+  旧缓存页面 + 新 bundle（或反之）组合加载；一旦元素缺失，崩溃点表现为千里之外的
+  click 回调读 null。
+- 修复（三层）：① REQUIRED_IDS 启动自检——缺任何 id 直接页面顶部红条列出，故障
+  从"考古"变"自诊"；② 全部绑定挪进 `initUI()`，`document.readyState === 'loading'`
+  时挂 DOMContentLoaded，杜绝早绑；③ 每个点击 handler 经 `safe()` 包装——UI 异常
+  打上时间线与控制台，不再静默。另给 esbuild 加 `--sourcemap`，下次报错行号直通源码。
+- 教训/复用：**浏览器 bundle 的 UI 故障先查"页面与 bundle 版本配对"**；交付形态必须
+  自带装配自检（配置校验是前端的 healthcheck）。

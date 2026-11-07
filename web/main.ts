@@ -48,9 +48,24 @@ const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElemen
 const logSys = (text: string): void => { timeline.push({ t: new Date().toLocaleTimeString(), kind: 'sys', peer: currentTarget ?? '*', text }); renderTimeline(); };
 const logWarn = (text: string): void => { timeline.push({ t: new Date().toLocaleTimeString(), kind: 'warn', peer: currentTarget ?? '*', text }); renderTimeline(); };
 
+/** UI 装配自检：缺少任何必需 id → 明确列出（防"bundle 与页面 DOM 失配"故障类，NOTES 式要求） */
+const REQUIRED_IDS = ['dot', 'st-text', 'merkle', 'srv', 'username', 'pass', 'connect', 'roster-list', 'group-list',
+  'g-gid', 'g-name', 'g-members', 'g-create', 'target-label', 'timeline', 'chat-input', 'send'];
+
+function assertIds(): boolean {
+  const missing = REQUIRED_IDS.filter((id) => document.getElementById(id) === null);
+  if (missing.length > 0) {
+    console.error(`[ui] missing element ids (页面与 bundle 失配?): ${missing.join(', ')}`);
+    document.body.insertAdjacentHTML('afterbegin',
+      `<div class="bg-[#eb5757] text-white text-sm px-4 py-2">UI 装配失败：页面缺少元素 ${missing.join(', ')} — 请硬刷新（Ctrl+Shift+R）或重建 bundle（pnpm web:build）</div>`);
+    return false;
+  }
+  return true;
+}
+
 // ─────────────────────────── UI：连接面板 ───────────────────────────
 
-$('connect').addEventListener('click', () => {
+function onConnect(): void {
   try {
     const url = ($('#srv').value || 'ws://localhost:9090').trim();
     selfUser = ($('#username').value || '').trim();
@@ -80,7 +95,16 @@ $('connect').addEventListener('click', () => {
   } catch (e) {
     logWarn(`boot failed: ${(e as Error).message}`);
   }
-});
+}
+
+/** UI 错误兜底：任何点击异常不再静默（页面上直接可见 + 控制台） */
+function safe(fn: () => void): void {
+  try { fn(); } catch (e) {
+    const msg = (e as Error).message ?? String(e);
+    console.error('[ui]', e);
+    logWarn(`UI error: ${msg}`);
+  }
+}
 
 function setConnected(ok: boolean): void {
   $('dot').className = ok ? 'bg-[#0f7b6c]' : 'bg-[#eb5757]';
@@ -356,9 +380,9 @@ function onControl(payload: string, from: string): void {
 
 // ─────────────────────────── UI：发送路径 ───────────────────────────
 
-$('send').addEventListener('click', () => onSend());
-$('chat-input').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') onSend(); });
-$('g-create').addEventListener('click', () => {
+// ─────────────────────────── UI 装配（DOMContentLoaded 安全绑定） ───────────────────────────
+
+function onCreateGroup(): void {
   const gid = ($('#g-gid').value || '').trim();
   const name = ($('#g-name').value || '').trim();
   const members = ($('#g-members').value || '').split(',').map((s) => s.trim()).filter((s) => s.length > 0);
@@ -366,7 +390,24 @@ $('g-create').addEventListener('click', () => {
   const missing = members.filter((m) => !peerInfo.has(m));
   if (groups.has(gid) || missing.length > 0) { logWarn(`create: 成员须在线; missing/重复: ${missing.join(',')}`); return; }
   startRoll(gid, name, 1, [...new Set([selfUser, ...members])].sort(), members);
-});
+}
+
+function initUI(): void {
+  if (!assertIds()) return;
+  $('connect').addEventListener('click', () => safe(onConnect));
+  $('send').addEventListener('click', () => safe(onSend));
+  $('chat-input').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') safe(onSend); });
+  $('g-create').addEventListener('click', () => safe(onCreateGroup));
+  $('target-label').textContent = '（未选择会话 — 左侧选择联系人或群）';
+  renderRoster();
+  renderTimeline();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initUI);
+} else {
+  initUI();
+}
 
 function onSend(): void {
   const input = $('chat-input') as HTMLInputElement;
