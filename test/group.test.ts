@@ -9,7 +9,8 @@
 import { describe, expect, it } from 'vitest';
 import { GChain, type GFrame } from '../src/gchain.js';
 import {
-  encodeEpoch, parseEpoch, applyEpoch, newEpochRoster, snapshotGroup, restoreGroup, randomSeedHex,
+  encodeEpoch, parseEpoch, applyEpoch, signClaim, verifyClaimWithMld,
+  snapshotGroup, restoreGroup, randomSeedHex, seedClaimBytes,
 } from '../src/ggroup.js';
 import { signGmsg, verifyGmsg } from '../src/attestation.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils.js';
@@ -105,44 +106,88 @@ describe('P1 per-message ML-DSA signature (anti-impersonation)', () => {
   });
 });
 
-describe('P1 epoch / roster logic', () => {
-  const idAlice = 'alice';
-  const idBob = 'bob';
-  const idCarl = 'carl';
+describe('P1 epoch / roster logic (claim-signed era)', () => {
+  const mkKey = (): { secret: string; pub: string } => {
+    const k = ml_dsa65.keygen();
+    return { secret: bytesToHex(k.secretKey), pub: bytesToHex(k.publicKey) };
+  };
+  const keys = { alice: mkKey(), bob: mkKey(), carl: mkKey(), eva: mkKey() };
+  type UserId = keyof typeof keys;
+  /** 钉柱模拟 trust.pinnedMld（读取可 undefined = 未钉柱） */
+  const pins: Record<string, string> = {};
+  const gate = (gid: string, ep: number) =>
+    (member: string, seed: string, ep2: number, sig: string) =>
+      verifyClaimWithMld(pins[member], gid, ep2, member, seed, sig);
+  /** 模拟"两阶段 roll"结果：成员自造 seed 并签名 → epoch 载荷 */
+  const makePayload = (gid: string, name: string, ep: number, members: string[], signers: UserId[] = members as UserId[]) => {
+    const ring = new Map<string, { seed: string; claim: string }>();
+    for (const m of members) {
+      const seed = seedHex();
+      const signer = (signers.includes(m as UserId) ? m : 'eva') as UserId;
+      ring.set(m, { seed, claim: signClaim(keys[signer].secret, gid, ep, m, seed) });
+    }
+    return { gid, name, creator: members[0] as string, ep, members: [...members].sort(), ring };
+  };
 
-  it('encode/parse roundtrip and gate rejections', () => {
-    const p = newEpochRoster('room1', 'First Room', 'alice', 0, ['bob', 'carl']);
+  it('claim-signed epoch applies (claims verified), eva cannot slip in a forged seed', () => {
+    for (const u of ['alice', 'bob', 'carl'] as const) pins[u] = keys[u].pub;
+    const p = makePayload('room1', 'Room', 1, ['alice', 'bob', 'carl']);
+    const g = applyEpoch(undefined, p, 'bob', gate('room1', 1));
+    expect(g?.members).toEqual(['alice', 'bob', 'carl']);
+    // creator 用 eva 假签名冒充 bob 的种子声明 → 整个 epoch 拒收
+    const forged = new Map(p.ring);
+    const evaSeed = seedHex();
+    forged.set('bob', { seed: evaSeed, claim: signClaim(keys.eva.secret, 'room1', 1, 'bob', evaSeed) });
+    const pg = { ...p, ring: forged };
+    expect(applyEpoch(undefined, pg as Parameters<typeof applyEpoch>[1], 'bob', gate('room1', 1))).toBeNull();
+  });
+
+  it('encode/parse roundtrip preserves claims;ring 覆盖不全/ep 不增 → 拒', () => {
+    for (const u of ['alice', 'bob', 'carl'] as const) pins[u] = keys[u].pub;
+    const p = makePayload('room1', 'Room', 1, ['alice', 'bob', 'carl']);
     const back = parseEpoch(encodeEpoch(p));
     expect(back?.members).toEqual([...p.members].sort());
     expect(back?.ring.size).toBe(3);
-    // ring 不覆盖成员 → 拒
     const partial = { ...p, ring: new Map([...p.ring].slice(0, 1)) };
-    expect(applyEpoch(undefined, partial, 'alice')).toBeNull();
-    // ep 不增 → 拒
-    const g0 = applyEpoch(undefined, p, 'alice');
-    const stale = newEpochRoster('room1', 'First Room', 'alice', p.ep - 1, p.members);
-    expect(applyEpoch(g0 as NonNullable<ReturnType<typeof applyEpoch>>, stale, 'alice')).toBeNull();
+    expect(applyEpoch(undefined, partial as Parameters<typeof applyEpoch>[1], 'alice', gate('room1', 1))).toBeNull();
+    const g0 = applyEpoch(undefined, p, 'alice', gate('room1', 1));
+    const stale = makePayload('room1', 'Room', 1, ['alice', 'bob', 'carl']); // ep 与当前相同 → 不增
+    expect(applyEpoch(g0 as NonNullable<ReturnType<typeof applyEpoch>>, stale, 'alice', gate('room1', 1))).toBeNull();
   });
 
   it('creator mismatch rejected (端侧权限闸门)', () => {
-    const p = newEpochRoster('room1', 'Room', 'alice', 0, ['bob']);
-    const g = applyEpoch(undefined, p, 'bob') as NonNullable<ReturnType<typeof applyEpoch>>;
-    const hijack = newEpochRoster('room1', 'Room', 'bob', p.ep, ['alice']); // bob 抢管理位
-    expect(applyEpoch(g, hijack, 'bob')).toBeNull(); // creator 变了 → 拒
+    pins.alice = keys.alice.pub;
+    pins.bob = keys.bob.pub;
+    const p = makePayload('room1', 'Room', 1, ['alice', 'bob']);
+    const g = applyEpoch(undefined, p, 'bob', gate('room1', 1)) as NonNullable<ReturnType<typeof applyEpoch>>;
+    const hijack = { ...makePayload('room1', 'Room', 2, ['alice', 'bob']), creator: 'bob' }; // bob 抢管理位
+    expect(applyEpoch(g, hijack, 'bob', gate('room1', 2))).toBeNull();
   });
 
   it('non-listed member (被踢者) epoch rejects itself out', () => {
-    const p = newEpochRoster('room1', 'Room', 'alice', 0, ['bob', 'carl']);
-    const g = applyEpoch(undefined, p, 'carl') as NonNullable<ReturnType<typeof applyEpoch>>;
-    // 踢掉 carl 的 epoch：成员表不含 carl → carl 视角直接拒（不再随新链）
-    const kick = newEpochRoster('room1', 'Room', 'alice', p.ep, ['bob']);
+    pins.alice = keys.alice.pub; pins.bob = keys.bob.pub; pins.carl = keys.carl.pub;
+    const p = makePayload('room1', 'Room', 1, ['alice', 'bob', 'carl']);
+    const g = applyEpoch(undefined, p, 'carl', gate('room1', 1)) as NonNullable<ReturnType<typeof applyEpoch>>;
+    const kick = makePayload('room1', 'Room', 2, ['alice', 'bob']);
     expect(kick.members.includes('carl')).toBe(false);
-    expect(applyEpoch(g, kick, 'carl')).toBeNull();
+    expect(applyEpoch(g, kick, 'carl', gate('room1', 2))).toBeNull();
+    // 且即便 carl 拿到新载荷，也不可能造出过 gate 的 claim（签名不匹配）
+  });
+
+  it('unpinned member claim (trust store 无 mld) → claim fail-closed', () => {
+    const p2 = makePayload('room9', 'Room9', 1, ['alice']);
+    // 未给 eva 钉柱（pins.eva 不存在）但 eva 冒名 alice？
+    const noPin = makePayload('room8', 'Room8', 1, ['alice']);
+    pins.alice = keys.eva.pub; // 被投毒的钉柱（evade）→ 诚实 alice 的 claim 反而不匹配
+    expect(applyEpoch(undefined, noPin as Parameters<typeof applyEpoch>[1], 'alice', gate('room8', 1))).toBeNull();
+    delete pins.alice;
+    expect(applyEpoch(undefined, p2 as Parameters<typeof applyEpoch>[1], 'alice', gate('room9', 1))).toBeNull(); // 无钉柱 → 拒
   });
 
   it('snapshot/restore roundtrip preserves group with chains', () => {
-    const p = newEpochRoster('room1', 'Room', 'alice', 0, ['bob']);
-    const g = applyEpoch(undefined, p, 'bob') as NonNullable<ReturnType<typeof applyEpoch>>;
+    for (const u of ['alice', 'bob'] as const) pins[u] = keys[u].pub;
+    const p = makePayload('room1', 'Room', 1, ['alice', 'bob']);
+    const g = applyEpoch(undefined, p, 'bob', gate('room1', 1)) as NonNullable<ReturnType<typeof applyEpoch>>;
     const re = restoreGroup(snapshotGroup(g)) as NonNullable<ReturnType<typeof restoreGroup>>;
     expect(re.members).toEqual(g.members);
     expect(re.selfSeed).toBe(g.selfSeed);

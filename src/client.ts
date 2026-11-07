@@ -22,7 +22,8 @@ import type { M4State } from './m4.js';
 import { initiatorHandshake, responderHandshake } from './channel.js';
 import {
   applyEpoch, encodeEpoch, parseEpoch, restoreGroup, snapshotGroup,
-  newEpochRoster,
+  seedClaimBytes, signClaim, randomSeedHex,
+  verifyClaimWithMld,
 } from './ggroup.js';
 import type { Group, GroupSnapshot } from './ggroup.js';
 import { makeAttestation, verifyAttestation, signGmsg, verifyGmsg } from './attestation.js';
@@ -170,13 +171,80 @@ function dispatchEpoch(g: Group, announce: string): void {
   let missed = 0;
   for (const m of g.members) {
     if (m === selfUser) continue;
-    ensureSession(m, true);
     const chan = sessions.get(m);
     if (chan === undefined || !peerInfo.has(m)) { missed++; continue; }
     dispatchWire('cntl', m, chan, announce);
   }
   console.log(`[chat] epoch ${g.ep} of '${g.name}' sent (members=${g.members.length}, missed=${missed})`);
   if (missed > 0) console.log(`[chat] ⚠ ${missed} member(s) missed the epoch — re-add them later (new epoch rotates everything again)`);
+}
+
+/** 本地 claim 验证适配：self 用自身 mld；他人用钉柱 mld（目录不含 self，钉柱永远查不到） */
+function claimGate(gid: string, ep: number): (member: string, seedHex: string, ep2: number, claimSig: string) => boolean {
+  return (member, seedHex, _ep, claimSig) => {
+    const mldPub = (member === selfUser) ? ident.mldPublic : trust.pinnedMld(member);
+    return verifyClaimWithMld(mldPub, gid, ep, member, seedHex, claimSig);
+  };
+}
+
+/** 两阶段轮换聚合窗口（P1/A+B）：creator 只收 claim，成员自造 seed */
+interface RollBudget {
+  gid: string;
+  name: string;
+  ep: number;
+  members: string[];
+  claims: Map<string, { seed: string; sig: string }>;
+  timer: NodeJS.Timeout;
+}
+const rolls = new Map<string, RollBudget>();
+
+function startRoll(gid: string, name: string, ep: number, finalMembers: string[], tellList: string[]): void {
+  const prev = rolls.get(gid);
+  if (prev !== undefined) { clearTimeout(prev.timer); rolls.delete(gid); }
+  const selfSeed = randomSeedHex();
+  const selfSig = signClaim(ident.mldSecret, gid, ep, selfUser, selfSeed);
+  const budget: RollBudget = {
+    gid, name, ep,
+    members: finalMembers,
+    claims: new Map([[selfUser, { seed: selfSeed, sig: selfSig }]]),
+    timer: setTimeout(() => finalizeRoll(gid), 6000),
+  };
+  rolls.set(gid, budget);
+  for (const m of tellList) {
+    if (m === selfUser) continue;
+    if (!peerInfo.has(m)) { console.log(`[#g] roll cannot reach offline '${m}'`); continue; }
+    const chan = sessions.get(m);
+    if (chan === undefined) { ensureSession(m, true); continue; }
+    dispatchWire('cntl', m, chan, `groll|${gid}|${name}|${selfUser}|${ep}|${finalMembers.join(',')}`);
+  }
+  console.log(`[#g] roll to ep=${ep} dispatched (members ${finalMembers.join(',')}); collecting signed seed claims (≤6s)`);
+}
+
+function finalizeRoll(gid: string): void {
+  const b = rolls.get(gid);
+  if (b === undefined) return;
+  rolls.delete(gid);
+  const missing = b.members.filter((m) => m !== selfUser && !b.claims.has(m) && peerInfo.has(m));
+  const ring = buildRingFromClaims(b.claims);
+  const payload: Parameters<typeof applyEpoch>[1] = {
+    gid: b.gid, name: b.name, creator: selfUser, ep: b.ep, members: b.members, ring,
+  };
+  const applied = applyEpoch(groups.get(gid), payload, selfUser, claimGate(b.gid, b.ep));
+  if (applied === null) {
+    console.error(`[#g] finalizeRoll rejected by gates (claims/duplicate) — keeping epoch ${groups.get(gid)?.ep ?? 0}`);
+    return;
+  }
+  groups.set(gid, applied);
+  persistSoon();
+  console.log(`[#g] '${b.name}' epoch → ${applied.ep} (all chains rotated from member-made seeds; claims=${applied.members.length})`);
+  if (missing.length > 0) console.log(`[#g] ⚠ offline during roll, dropped: ${missing.join(',')} — re-add them when back online`);
+  dispatchEpoch(applied, encodeEpoch(payload));
+}
+
+function buildRingFromClaims(claims: Map<string, { seed: string; sig: string }>): Map<string, { seed: string; claim: string }> {
+  const ring = new Map<string, { seed: string; claim: string }>();
+  for (const [m, c] of claims) ring.set(m, { seed: c.seed, claim: c.sig });
+  return ring;
 }
 
 ws.on('message', (raw) => {
@@ -308,21 +376,75 @@ ws.on('message', (raw) => {
   }
 });
 
-/** pairwise 控制载荷路由 */
+/** pairwise 控制载荷路由（P1/A+B：两阶段纪元 + 收成 claim 集） */
 function onControl(payload: string, from: string): void {
+  if (payload.startsWith('groll|')) { handleRollInvite(payload, from); return; }
+  if (payload.startsWith('gclaim|')) { handleGroupClaim(payload, from); return; }
   const epoch = parseEpoch(payload);
   if (epoch !== null) {
-    const applied = applyEpoch(groups.get(epoch.gid), epoch, selfUser);
+    const applied = applyEpoch(groups.get(epoch.gid), epoch, selfUser, claimGate(epoch.gid, epoch.ep));
     if (applied === null) {
-      console.log(`  [${from}] <gepoch for '${epoch.gid}' rejected (creator/ep/ring gate)>`);
+      console.log(`  [${from}] <gepoch for '${epoch.gid}' rejected (creator/ep/ring/claim gate)>`);
       return;
     }
     groups.set(applied.gid, applied);
     persistSoon();
-    console.log(`[#g] group '${applied.name}'/${applied.gid} joined/advanced: epoch ${applied.ep}, members ${applied.members.join(',')} — chains rotated`);
+    console.log(`[#g] group '${applied.name}'/${applied.gid} joined/advanced: epoch ${applied.ep}, members ${applied.members.join(',')} — chains rotated (claims verified)`);
     return;
   }
   console.log(`  [${from}] <unknown control payload (dropped, fail-closed)>`);
+}
+
+/** groll：creator 的轮换声明窗（未知 gid = 邀请；已知 gid = 后续轮换，须 creator 本人） */
+function handleRollInvite(payload: string, from: string): void {
+  const f = payload.split('|');
+  if (f.length !== 6) return; // fail-closed
+  const gid = f[1] as string;
+  const name = f[2] as string;
+  const creator = f[3] as string;
+  const ep = Number(f[4]);
+  const members = (f[5] as string).split(',').filter((x) => x.length > 0);
+  if (!Number.isInteger(ep) || ep < 1 || members.length === 0) return;
+  const cur = groups.get(gid);
+  if (cur !== undefined) {
+    if (from !== cur.creator) { console.log(`  [#g ${gid}] <groll from non-creator '${from}' rejected>`); return; }
+    if (ep <= cur.ep) return; // 过期 roll
+  } else {
+    console.log(`[#g] invited to new group '${name}'/${gid} by '${from}' (ep=${ep}, members ${members.join(',')})`);
+  }
+  const selfSeed = randomSeedHex();
+  const declaredEp = cur !== undefined ? ep : ep; // 同一 window
+  const sig = signClaim(ident.mldSecret, gid, declaredEp, selfUser, selfSeed);
+  const chan = sessions.get(from);
+  if (chan === undefined) { console.log(`[#g] cannot reply gclaim (no session with '${from}')`); return; }
+  dispatchWire('cntl', from, chan, `gclaim|${gid}|${declaredEp}|${selfUser}|${selfSeed}|${sig}`);
+  console.log(`[#g] responded with signed seed claim for ep=${declaredEp} (member-made seed, ${selfSeed.slice(0, 8)}…)`);
+}
+
+/** gclaim：creator 收拢成员的签名声明（每帧即时验签，拒绝冒名 cloaked entries） */
+function handleGroupClaim(payload: string, from: string): void {
+  const f = payload.split('|');
+  if (f.length !== 6) return;
+  const gid = f[1] as string;
+  const ep = Number(f[2]);
+  const member = f[3] as string;
+  const seed = f[4] as string;
+  const sig = f[5] as string;
+  if (!Number.isInteger(ep)) return;
+  const budget = rolls.get(gid);
+  if (budget === undefined) { console.log(`  [${from}] <late/unknown gclaim for '${gid}' (no open roll)>`); return; }
+  const expected = claimGate(gid, budget.ep);
+  if (from !== member || !expected(member, seed, ep, sig)) {
+    console.log(`  [${from}] <gclaim signature/origin MISMATCH for '${member}' — dropped>`);
+    return;
+  }
+  budget.claims.set(member, { seed, sig });
+  console.log(`[#g] claim ${budget.claims.size}/${budget.members.length} for ep=${budget.ep} (from '${member}')`);
+  const haveAll = budget.members.every((m) => m === selfUser || budget.claims.has(m));
+  if (haveAll) {
+    clearTimeout(budget.timer);
+    finalizeRoll(gid); // 全员到齐 → 立即收口
+  }
 }
 
 /** pending 补发：peer 已确认在线 → FIFO 依次发送并转 inflight（信封原样重发） */
@@ -418,10 +540,10 @@ function handleGroupCommand(line: string): void {
   switch (sub) {
     case 'help':
       console.log(`#g help                              — this
-#g create <gid> <name> <m1 m2...>     — create group (members must be online)
+#g create <gid> <name> <m1 m2...>     — create group (members must be online, roll window 6s)
 #<gid> <text>                         — send text to group
-#g add <gid> <user>                   — creator only (epoch rotation; target must be online)
-#g kick <gid> <user>                  — creator only (target = removed, not notified)
+#g add <gid> <user>                   — creator only (roll rotation; target must be online)
+#g kick <gid> <user>                  — creator only (target = removed; they cannot produce new era claims)
 #g list [<gid>]                       — show groups / members`);
       break;
     case 'create': {
@@ -430,17 +552,13 @@ function handleGroupCommand(line: string): void {
       if (gid === undefined || name === undefined) { console.error('usage: #g create <gid> <name> <members...>'); break; }
       const others = parts.slice(4);
       const missing = others.filter((m) => !peerInfo.has(m));
-      if (missing.length > 0 || !selfUser) {
-        console.error(`#g create requires all members online; missing: ${missing.join(',') || '(at least one member)'}`);
+      if (groups.has(gid)) { console.error('group id already exists locally'); break; }
+      const finalMembers = [...new Set([selfUser, ...others])].sort();
+      if (missing.length > 0) {
+        console.error(`#g create requires all target members online (they receive the groll window); missing: ${missing.join(',')}`);
         break;
       }
-      const epoch = newEpochRoster(gid, name, selfUser, 0, others);
-      const applied = applyEpoch(undefined, epoch, selfUser);
-      if (applied === null) { console.error('create: internal epoch build failed'); break; }
-      groups.set(gid, applied);
-      persistSoon();
-      console.log(`[#g] group '${name}'/${gid} created: epoch ${applied.ep}, members ${applied.members.join(',')}`);
-      dispatchEpoch(applied, encodeEpoch(epoch));
+      startRoll(gid, name, 1, finalMembers, others);
       break;
     }
     case 'add': {
@@ -450,14 +568,8 @@ function handleGroupCommand(line: string): void {
       if (g === undefined || user === undefined) { console.error('usage: #g add <gid> <user>'); break; }
       if (g.creator !== selfUser) { console.error('only creator may update group membership'); break; }
       if (g.members.includes(user)) { console.error('already in group'); break; }
-      if (!peerInfo.has(user)) { console.error('new member must be online (they must receive the fresh epoch)'); break; }
-      const epoch = newEpochRoster(g.gid, g.name, g.creator, g.ep, [...g.members, user]);
-      const applied = applyEpoch(g, epoch, selfUser);
-      if (applied === null) { console.error('add: epoch build failed'); break; }
-      groups.set(g.gid, applied);
-      persistSoon();
-      console.log(`[#g] '${g.name}' epoch → ${applied.ep} (added '${user}', all chains rotated)`);
-      dispatchEpoch(applied, encodeEpoch(epoch));
+      if (!peerInfo.has(user)) { console.error('new member must be online (they must answer the roll)'); break; }
+      startRoll(g.gid, g.name, g.ep + 1, [...new Set([...g.members, user])].sort(), [...g.members, user]);
       break;
     }
     case 'kick': {
@@ -468,13 +580,8 @@ function handleGroupCommand(line: string): void {
       if (g.creator !== selfUser) { console.error('only creator may kick'); break; }
       if (user === selfUser) { console.error('creator cannot kick self (dissolve the group instead)'); break; }
       if (!g.members.includes(user)) { console.error('not a member'); break; }
-      const epoch = newEpochRoster(g.gid, g.name, g.creator, g.ep, g.members.filter((m) => m !== user));
-      const applied = applyEpoch(g, epoch, selfUser);
-      if (applied === null) { console.error('kick: epoch build failed'); break; }
-      groups.set(g.gid, applied);
-      persistSoon();
-      console.log(`[#g] '${g.name}' epoch → ${applied.ep} (kicked '${user}', chains rotated; their old seeds are useless from now)`);
-      dispatchEpoch(applied, encodeEpoch(epoch));
+      const remaining = g.members.filter((m) => m !== user);
+      startRoll(g.gid, g.name, g.ep + 1, [...new Set(remaining)].sort(), remaining);
       break;
     }
     case 'list': {

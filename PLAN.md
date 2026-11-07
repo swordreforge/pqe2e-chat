@@ -121,9 +121,12 @@
       新 epoch；踢人后旧链 fail-closed，被踢者新消息当场拒收——冒烟实证）
       （`group.test` 12+2 例：副本消费/乱序/重放/rotation 闸门/snapshot）
 - [x] 群消息防冒名（P1.1）：逐消息 ML-DSA 可见签名 + TOFU mld 钉柱
-      （`group.test` 3 例：诚实验签/持 seed 冒名必败/字段篡改破签）
-- [ ] （未实现·P2）叶自造 seed（A/B 阶段：成员自造种子经 pairwise 分发 + 种子声明
-      签名），从结构上根除"creator 冒充他人"（当前已有逐消息签名兜底）
+- [x] **叶自造 seed + 种子声明签名（P1.2，冒名根除）**：两阶段
+      groll → 成员自造 seed → 签名 claim 回执 → creator 聚合 gepoch →
+      **每位成员 apply 时逐条验 claim**。creator 从"代生成种子"降级为纯协调者
+      （无内容伪造权；冒名用例：持群 seed 冒名必败 / 假 claim 塞入必败 /
+      creator 变更必败——`group.test` claim-signed era 6 例）。
+      creator 仅剩可用性权力（缺席 roll 窗口即被弃，CLI 显式告警）。
 - [ ] （未实现·P2）真实链上锚定（测试网 ENS）/ 目录 merkle 化
 - [ ] （未实现·P2）浏览器前端（可选加分项）
 
