@@ -60,7 +60,7 @@
 | # | 威胁/攻击 | 防御机制 | 关键代码 | 测试证据 |
 |---|---|---|---|---|
 | T1 | HNDL 量子对手（今天抓包、未来破密钥） | 混合协商：X25519 与 ML-KEM-768 **任一被破仍守住另一侧**；root = HKDF(dh‖ss‖eph‖ct) | `channel.ts initiator/responderHandshake` | `handshake.test` 对称性/错误 KEM 私钥分叉 |
-| T2 | 中继替换目录公钥（目录投毒/MITM） | ① ML-DSA-65 + wallet ECDSA **双签**条目（fail-closed）② wallet 公钥 TOFU 钉柱变更即拒 | `attestation.ts`/`trust.ts` | `attestation.test`（含"全新钥匙自称 alice"→ 双签过但 TOFU 捕获） |
+| T2 | 中继替换目录公钥（目录投毒/MITM） | ① P2.1 **Merkle 包含证明**（root 随 dir 广播，篡改客户端离线可判）② ML-DSA-65 + wallet ECDSA **双签**条目（fail-closed）③ **锚定账本**比对（钱包签名哈希链，最新值语义；诚实 owner 重发布自愈）④ TOFU 钉柱（后备层） | `merkle.ts`/`anchor.ts`/`trust.ts` | `anchored.test` 9 例 + 冒烟（merkle root 打印、锚定 match/自愈） |
 | T3 | 降级攻击/跨通道重排 | 算法域常量进 HKDF info；payload 域分隔定序 | `channel.ts m2Info`、`attestationBytes` | 换通道名密钥必分叉测试 |
 | T4 | 重放攻击 | M4 棘轮已消费序号拒绝 + 窗口外丢弃 | `m4.ts consumeIn` | `ratchet.test` 全帧重放全抛 |
 | T5 | 密文/nonce/AAD 篡改 | XChaCha20-Poly1305 tag 校验，AAD 绑 `sorted(from,to)+seq` | `m4.ts seal/open` | 篡改矩阵 5 项全 fail-closed |
@@ -90,8 +90,11 @@
 
 ## 6. 诚实限界（与真实产品的差距，答辩必备）
 
-1. **TOFU ≠ 链上信任根**：本作品把"wallet→公钥"绑定存本地 JSON，首次见面即信任；
-   真实方案应由 ENS/合约把绑定上链（不可变锚点 + 轮换需交易）。本作品仅做本质抽象。
+1. **锚定层（P2.1 已实现，真 ENS Provider 待接）**：目录绑定已具备"钱包签名 +
+   append-only 哈希链 + 最新值语义"的 **ENS 等价协议面**（`AnchorProvider` 缝线），
+   Merkle 包含证明使目录篡改**在客户端离线可判**；诚实 owner 重发布可自愈篡改历史。
+   与真 ENS 的差距：账本本地单机共享（无全局共识与拜占庭写入者）、需接
+   测试网合约调用（RPC + 资金私钥，课程环境外）、轻客户端证明（接入状态根）未做。
 2. **没有真正的分布式**：中继仍在单机；传输层未接入 Waku/libp2p；元数据（流量画像）未保护。
 3. **状态持久化（P0 已解决）**：M4 链位置/乱序缓存/离线补发队列已加密持久化
    （argon2id 信封，决策见 PLAN §7）——重启零丢失；剩余 gap：正在发送中未确认帧

@@ -22,11 +22,13 @@ export interface RosterEntry {
   sw: string;
   /** ML-DSA-65 签名（hex） */
   sp: string;
+  /** P2.1 Merkle 包含证明（optional：老服务兼容） */
+  proof?: Array<{ sib: string; right: boolean }>;
 }
 
 export type Wire =
   | { kind: 'hello'; entry: RosterEntry }
-  | { kind: 'dir'; roster: RosterEntry[] }
+  | { kind: 'dir'; root?: string; roster: RosterEntry[] }
   /** M2 混合握手邀请：发起方 → 响应方 */
   | { kind: 'invite'; from: string; to: string; ephX: string; kem: string }
   /** M4 棘轮帧：每条消息独立轮换密钥 */
@@ -47,15 +49,22 @@ export const asText = (b: Uint8Array): string => new TextDecoder().decode(b);
 
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
+const isProof = (v: unknown): v is Array<{ sib: string; right: boolean }> =>
+  Array.isArray(v) && v.every((s) => typeof s === 'object' && s !== null &&
+    typeof (s as { sib: unknown }).sib === 'string' && typeof (s as { right: unknown }).right === 'boolean');
+
 const isRosterEntryObj = (e: unknown): e is RosterEntry =>
   typeof e === 'object' && e !== null && isStr((e as RosterEntry).user)
   && isStr((e as RosterEntry).x) && isStr((e as RosterEntry).kem)
   && isStr((e as RosterEntry).mld) && isStr((e as RosterEntry).w)
-  && isStr((e as RosterEntry).sw) && isStr((e as RosterEntry).sp);
+  && isStr((e as RosterEntry).sw) && isStr((e as RosterEntry).sp)
+  && ((e as RosterEntry).proof === undefined || isProof((e as RosterEntry).proof));
 
 const isRoster = (v: unknown): v is RosterEntry[] => Array.isArray(v) && v.every(isRosterEntryObj);
 
 const isSafeSeq = (seq: unknown): seq is number => typeof seq === 'number' && Number.isInteger(seq) && seq >= 0 && seq < 2 ** 32;
+
+const isHex64 = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 
 /**
  * 对服务器转来的帧做最基本的结构校验。
@@ -68,7 +77,9 @@ export function parseWire(data: string): Wire {
       if (isRosterEntryObj(w.entry)) return { kind: 'hello', entry: w.entry };
       break;
     case 'dir':
-      if (isRoster(w.roster)) return { kind: 'dir', roster: w.roster };
+      if (isRoster(w.roster) && (w.root === undefined || isHex64(w.root))) {
+        return { kind: 'dir', root: w.root, roster: w.roster };
+      }
       break;
     case 'invite':
       if (isStr(w.from) && isStr(w.to) && isStr(w.ephX) && isStr(w.kem)) {

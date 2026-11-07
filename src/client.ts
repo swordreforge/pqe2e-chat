@@ -29,6 +29,8 @@ import type { Group, GroupSnapshot } from './ggroup.js';
 import { makeAttestation, verifyAttestation, signGmsg, verifyGmsg } from './attestation.js';
 import { TofuTrust } from './trust.js';
 import { writeSecureFile, readSecureFile } from './keystore.js';
+import { LedgerAnchor, dirLeafHex, dirLeafCanonicalText, anchorMatch } from './anchor.js';
+import { verifyInclusion } from './merkle.js';
 
 const SERVER_URL = process.env.SERVER ?? 'ws://localhost:9090';
 const DATA_DIR = 'data';
@@ -70,6 +72,13 @@ const myAttestation = makeAttestation({
   wPublic: ident.wPub,
 });
 const trust = new TofuTrust(DATA_DIR);
+/** P2.1 目录锚定层：钱包签名 + append-only 哈希链（ENS 等价协议面） */
+const anchor = new LedgerAnchor(DATA_DIR);
+
+/** 自锚定发布：目录叶 = 本身份能力整包哈希；轮换身份时重发布即 ENS "setText" 语义 */
+const selfLeafAtBoot = dirLeafHex({ user: selfUser, w: ident.wPub, x: ident.xPub, kem: ident.kemPublic, mld: ident.mldPublic, sw: myAttestation.sw, sp: myAttestation.sp });
+anchor.publish({ user: selfUser, leaf: selfLeafAtBoot, walletSecretHex: ident.wSecret });
+console.log(`[anchor] self dir-leaf anchored: ${selfSliceOf(selfLeafAtBoot)}…`);
 
 const peerInfo = new Map<string, { x: string; kem: string }>();
 /** 已建立 pairwise 会话：peer → M4 棘轮通道 */
@@ -166,6 +175,10 @@ function ensureSession(peer: string, force = false): void {
 const KEY_TAG = (key: Uint8Array): string =>
   createHash('sha256').update(key).digest('hex').slice(0, 12);
 
+function selfSliceOf(hex: string): string {
+  return createHash('sha256').update(hex).digest('hex').slice(0, 10);
+}
+
 /** 将 creator 构造的 epoch 通过 pairwise 通道推给所有成员（apply 本地后逐个发） */
 function dispatchEpoch(g: Group, announce: string): void {
   let missed = 0;
@@ -261,11 +274,26 @@ ws.on('message', (raw) => {
       const verified = new Map<string, { x: string; kem: string }>();
       for (const e of wire.roster) {
         if (e.user === selfUser) continue;
+        const leaf = dirLeafHex({ user: e.user, w: e.w, x: e.x, kem: e.kem, mld: e.mld, sw: e.sw, sp: e.sp });
+        // ① Merkle 包含证明（服务器视区一致性；root/proof 缺席 = 老协议容忍）
+        if (wire.root !== undefined && e.proof !== undefined &&
+          !verifyInclusion(dirLeafCanonicalText(e), e.proof, wire.root)) {
+          console.log(`[chat] ⚠ merkle proof FAILED for '${e.user}' — directory tampering, dropped`);
+          continue;
+        }
+        // ② 双签 attestation（fail-closed）
         if (!verifyAttestation(e)) {
           console.log(`[chat] ⚠ attestation INVALID for '${e.user}' — dropped (possible directory tampering)`);
           continue;
         }
-        // ② TOFU 钉柱校验（钱包公钥 + ML-DSA 公钥双锚点——mld 是群签名信任根）
+        // ③ P2.1 锚定叶比对（ENS 等价：钱包签名的最新锚定 vs 条目重算叶）
+        const st = anchorMatch(anchor.latest(e.user), leaf, e.w);
+        if (st === 'conflict') {
+          console.log(`[chat] ⚠⚠ ANCHOR CONFLICT for '${e.user}': anchored leaf ≠ presented entry — offline tamper detected, dropped`);
+          continue;
+        }
+        if (st === 'unanchored') console.log(`[chat] ⚠ '${e.user}' not yet anchored (first sighting; TOFU layer still applies)`);
+        // ④ TOFU 钉柱校验（钱包+ML-DSA 双锚点，后备层）
         const t = trust.check(e.user, e.w, e.mld);
         if (t === 'conflict') {
           console.log(`[chat] ⚠⚠ TOFU CONFLICT for '${e.user}': wallet pubkey changed since pinning — dropped`);

@@ -8,6 +8,8 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { parseWire } from './codec.js';
 import type { RosterEntry } from './codec.js';
+import { buildTree } from './merkle.js';
+import { dirLeafCanonicalText, type AttestedBundle } from './anchor.js';
 import { PROJECT } from './version.js';
 
 const PORT = Number(process.env.PORT ?? 9090);
@@ -19,12 +21,18 @@ interface Online {
 const roster = new Map<string, Online>();
 
 function broadcastDir(): void {
-  const frame = JSON.stringify({
-    kind: 'dir',
-    roster: [...roster.values()].map((e) => ({ ...e.entry })),
-  });
-  console.log(`[server] dir updated: ${roster.size} online ${[...roster.keys()].join(',')}`);
-  for (const e of roster.values()) if (e.sock.readyState === WebSocket.OPEN) e.sock.send(frame);
+  // Merkle 目录：按 user 排序构建树，每条目附包含证明（T2 深化：目录视区一致性）
+  const built = [...roster.values()]
+    .map((e) => ({ ...e.entry }))
+    .sort((a, b) => a.user.localeCompare(b.user));
+  const leaves = built.map((e) => dirLeafCanonicalText(e as unknown as AttestedBundle));
+  const { root, proofs } = buildTree(leaves);
+  const wireRoster = built.map((e, i) => ({ ...e, proof: proofs[i] ?? [] }));
+  const frame = JSON.stringify({ kind: 'dir', root, roster: wireRoster });
+  console.log(`[server] dir updated: ${built.length} online ${built.map((r) => r.user).join(',')} (root ${root.slice(0, 10)}…)`);
+  for (const e of roster.values()) {
+    if (e.sock.readyState === WebSocket.OPEN) e.sock.send(frame);
+  }
 }
 
 const wss = new WebSocketServer({ port: PORT });

@@ -127,8 +127,17 @@
       （无内容伪造权；冒名用例：持群 seed 冒名必败 / 假 claim 塞入必败 /
       creator 变更必败——`group.test` claim-signed era 6 例）。
       creator 仅剩可用性权力（缺席 roll 窗口即被弃，CLI 显式告警）。
-- [ ] （未实现·P2）真实链上锚定（测试网 ENS）/ 目录 merkle 化
-- [ ] （未实现·P2）浏览器前端（可选加分项）
+- [x] **Merkle 目录 + 锚定账本（P2.1，"ENS 等价协议面"）**：
+      目录叶 = SHA256(身份包)；**钱包签名的 append-only 哈希链账本**（min seq、
+      原子写、最新值语义）；服务器 dir 广播带 **merkle root + 每条目包含证明**，
+      客户端顺序：证明 → 双签 attestation → 锚定叶比对 → TOFU 后备。
+      目录篡改在客户端**离线可判**（`anchored.test` 9 例：奇偶叶证明/篡改必败/
+      链签名必检/三态 match 冲突）；真 ENS 时替换 `AnchorProvider` 两函数即可
+      （REPORT §3 T2 注有映射）。附加特性：** owner 重发布自愈**——历史块被改后,
+      所有者下一次诚实发布会覆盖之（ENS setText 语义）。
+- [ ] （未实现·P2.2）真链 Provider（测试网 ENS 合约调用；需 RPC + 资金私钥，
+      接口缝线已留）/ 目录_InsertOnly_轻客户端证明
+- [ ] （未实现·P3）浏览器前端（可选加分项）
 
 ## 5. 测试与验证清单
 
