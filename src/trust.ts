@@ -11,6 +11,8 @@ import path from 'node:path';
 export interface TrustEntry {
   /** 钉柱的 wallet 公钥（hex） */
   wallet: string;
+  /** 钉柱的 ML-DSA-65 公钥（hex，attestation 绑定，用于群消息签名验证） */
+  mld?: string;
   /** 首次钉柱时间 ISO */
   first: string;
 }
@@ -33,16 +35,33 @@ export class TofuTrust {
     }
   }
 
-  /** 返回判定的同时完成"首次即钉柱"副作用；调用方须在管道层 verify 之后使用 */
-  check(user: string, walletPubHex: string): TrustResult {
+  /** wallet 与 mld 都校验（mld 是群消息签名信任根）；返回判定的同时完成"首次即钉柱" */
+  check(user: string, walletPubHex: string, mldPubHex?: string): TrustResult {
     const entry = this.store.pinned[user];
     if (entry === undefined) {
-      this.store.pinned[user] = { wallet: walletPubHex, first: new Date().toISOString() };
+      this.store.pinned[user] = {
+        wallet: walletPubHex,
+        first: new Date().toISOString(),
+        ...(mldPubHex !== undefined ? { mld: mldPubHex } : {}),
+      };
       this.persist();
       return 'new';
     }
     if (entry.wallet !== walletPubHex) return 'conflict';
+    if (mldPubHex !== undefined) {
+      if (entry.mld === undefined) {
+        entry.mld = mldPubHex; // 老钉柱缺 mld → 升级补钉
+        this.persist();
+        return 'pinned';
+      }
+      if (entry.mld !== mldPubHex) return 'conflict'; // mld 变更 = 目录中身份替换攻
+    }
     return 'pinned';
+  }
+
+  /** 群消息签名验证用的钉柱 mld 公钥 */
+  pinnedMld(user: string): string | undefined {
+    return this.store.pinned[user]?.mld;
   }
 
   /** 显式换钥匙（模拟链上轮换交易）：删除钉柱，等待下次首次重钉 */

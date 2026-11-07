@@ -25,7 +25,7 @@ import {
   newEpochRoster,
 } from './ggroup.js';
 import type { Group, GroupSnapshot } from './ggroup.js';
-import { makeAttestation, verifyAttestation } from './attestation.js';
+import { makeAttestation, verifyAttestation, signGmsg, verifyGmsg } from './attestation.js';
 import { TofuTrust } from './trust.js';
 import { writeSecureFile, readSecureFile } from './keystore.js';
 
@@ -197,7 +197,8 @@ ws.on('message', (raw) => {
           console.log(`[chat] ⚠ attestation INVALID for '${e.user}' — dropped (possible directory tampering)`);
           continue;
         }
-        const t = trust.check(e.user, e.w);
+        // ② TOFU 钉柱校验（钱包公钥 + ML-DSA 公钥双锚点——mld 是群签名信任根）
+        const t = trust.check(e.user, e.w, e.mld);
         if (t === 'conflict') {
           console.log(`[chat] ⚠⚠ TOFU CONFLICT for '${e.user}': wallet pubkey changed since pinning — dropped`);
           continue;
@@ -270,6 +271,12 @@ ws.on('message', (raw) => {
       const chan = g?.chains.get(wire.from);
       if (g === undefined || chan === undefined || !g.members.includes(wire.from)) {
         console.log(`  [#g ${wire.gid}] <frame from '${wire.from}' cannot open — unknown group or sender not in ring>`);
+        break;
+      }
+      // ① 发送者可见签名（ML-DSA，钉柱 mld 公钥验证）：即使 seed 泄露也无法冒名
+      const senderMld = trust.pinnedMld(wire.from);
+      if (senderMld === undefined || !verifyGmsg(senderMld, wire.gid, wire.from, wire.seq, wire.nonce, wire.ct, wire.sig)) {
+        console.log(`  [#g ${g.name}] <signature INVALID from '${wire.from}' seq=${wire.seq} — impersonation attempt?>`);
         break;
       }
       try {
@@ -382,9 +389,14 @@ function sendGroupMessage(g: Group, text: string): void {
   const chan = g.chains.get(selfUser);
   if (chan === undefined) { console.error(`[#g] no self chain for '${g.gid}' (epoch glitch)`); return; }
   const f = chan.seal(text, g.gid, selfUser);
+  // 逐消息 ML-DSA 可见签名：签 (gid|sender|seq|nonce|ct) 全量
+  const sig = signGmsg(ident.mldSecret, g.gid, selfUser, f.seq, f.nonce, f.ct);
   for (const m of g.members) {
     if (m === selfUser) continue;
-    const wire: unknown = { kind: 'gmsg', from: selfUser, to: m, gid: g.gid, v: 4, seq: f.seq, nonce: f.nonce, ct: f.ct };
+    const wire: unknown = {
+      kind: 'gmsg', from: selfUser, to: m, gid: g.gid, v: 4, seq: f.seq,
+      nonce: f.nonce, ct: f.ct, sig,
+    };
     if (peerInfo.has(m)) {
       const infl = inflight.get(m) ?? [];
       infl.push(wire);

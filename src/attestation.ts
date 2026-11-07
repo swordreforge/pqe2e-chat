@@ -35,12 +35,30 @@ export interface SignedAttestation extends AttestationRef {
 }
 
 const ATTESTATION_DOMAIN = 'pqe2e/att/v1';
+const GMSG_SIG_DOMAIN = 'pqe2e/gmsg-sig/v1';
 
 const hexBytes = (hex: string): Uint8Array => new Uint8Array(Buffer.from(hex, 'hex'));
 
 /** 规范化 payload（域分隔 + 字段定序，防字段重排/域混淆） */
 export function attestationBytes(r: AttestationRef): Uint8Array {
   return utf8([ATTESTATION_DOMAIN, r.user, r.x, r.kem, r.mld, r.w].join('|'));
+}
+
+/** 群消息可见签名集：签 (gid|sender|seq|nonce|ct) 全量——防 seed 泄露后冒名 */
+export function gmsgSigBytes(gid: string, sender: string, seq: number, nonce: string, ct: string): Uint8Array {
+  return utf8([GMSG_SIG_DOMAIN, gid, sender, String(seq), nonce, ct].join('|'));
+}
+
+export function signGmsg(mldSecretHex: string, gid: string, sender: string, seq: number, nonce: string, ct: string): string {
+  return bytesToHex(ml_dsa65.sign(gmsgSigBytes(gid, sender, seq, nonce, ct), hexBytes(mldSecretHex)));
+}
+
+export function verifyGmsg(mldPublicHex: string, gid: string, sender: string, seq: number, nonce: string, ct: string, sigHex: string): boolean {
+  try {
+    return ml_dsa65.verify(hexBytes(sigHex), gmsgSigBytes(gid, sender, seq, nonce, ct), hexBytes(mldPublicHex));
+  } catch {
+    return false;
+  }
 }
 
 /** 用本端签名私钥（wallet + ML-DSA）生成双签 attestation；x/kem 私钥不签名，只作被绑定材料 */

@@ -11,7 +11,9 @@ import { GChain, type GFrame } from '../src/gchain.js';
 import {
   encodeEpoch, parseEpoch, applyEpoch, newEpochRoster, snapshotGroup, restoreGroup, randomSeedHex,
 } from '../src/ggroup.js';
+import { signGmsg, verifyGmsg } from '../src/attestation.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils.js';
+import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 
 const seedHex = () => bytesToHex(randomBytes(32));
 
@@ -75,6 +77,31 @@ describe('P1 GChain stream semantics', () => {
     expect(re.open(all[2] as GFrame, 'room1', 'alice')).toBe('g-2'); // 跳号缓存随快照恢复
     expect(re.open(all[1] as GFrame, 'room1', 'alice')).toBe('g-1');
     expect(() => re.open(all[1] as GFrame, 'room1', 'alice')).toThrow();
+  });
+});
+
+describe('P1 per-message ML-DSA signature (anti-impersonation)', () => {
+  const aliceMld = ml_dsa65.keygen();
+  const evaMld = ml_dsa65.keygen();
+  const gid = 'roomS'; const sender = 'alice'; const seq = 42;
+  const nonce = Buffer.from(randomBytes(24)).toString('base64');
+  const ct = Buffer.from(randomBytes(48)).toString('base64');
+
+  it('honest sender signature verifies against pinned mld pub', () => {
+    const sig = signGmsg(bytesToHex(aliceMld.secretKey), gid, sender, seq, nonce, ct);
+    expect(verifyGmsg(bytesToHex(aliceMld.publicKey), gid, sender, seq, nonce, ct, sig)).toBe(true);
+  });
+
+  it('attacker knowing the groups SEED but not mld secret cannot forge alice', () => {
+    // 这是 creator 冒名威胁的核心断言：seed 副本不能替代身份签名
+    const forged = signGmsg(bytesToHex(evaMld.secretKey), gid, sender, seq, nonce, ct);
+    expect(verifyGmsg(bytesToHex(aliceMld.publicKey), gid, sender, seq, nonce, ct, forged)).toBe(false);
+  });
+
+  it('field tampering breaks the visible signature', () => {
+    const sig = signGmsg(bytesToHex(aliceMld.secretKey), gid, sender, seq, nonce, ct);
+    expect(verifyGmsg(bytesToHex(aliceMld.publicKey), gid, sender, seq + 1, nonce, ct, sig)).toBe(false);
+    expect(verifyGmsg(bytesToHex(aliceMld.publicKey), gid, sender, seq, Buffer.from(randomBytes(24)).toString('base64'), ct, sig)).toBe(false);
   });
 });
 

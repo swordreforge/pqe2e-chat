@@ -99,9 +99,12 @@
 4. **密钥落盘已整定加密（P0 已解决）**：identity/会话状态均进 argon2id 信封
    （m=8MiB、t=2 折中参数；生产建议 m≥19MiB、t≥3）；trust.json 仅存公钥故仍明文；
    口令回显可见（课程语境限制），生产应 using no-echo getpass。
-5. **群聊 MLS-lite（P1 已实现，与真 MLS 的差距）**：seed 由 **creator 代生成**（MLS 为叶自造
-   → creator 可冒充他人群消息，属诚实限界）；被踢者不获通知（静默失能）；入群成员必须
-   在线接收 epoch（离线入群需重发）；无正式 RFC 9420 的 tree-KEM 与双棘轮路径更新。
+5. **群聊 MLS-lite（P1 已实现）**：群消息已带**逐消息 ML-DSA 可见签名**
+   （签 gid|sender|seq|nonce|ct，钉柱 mld 公钥验证——**seed 泄露也无法冒名**，
+   冒名用例在 group.test）。剩余差距：seed 仍由 **creator 代生成**（信号：MLS 为叶自造，
+   叶自造 A/B 阶段入 P2 即把"creator 冒充他人"从结构上根除）；被踢者不获通知
+   （静默失能）；入群成员必须在线接收 epoch；无正式 RFC 9420 的 tree-KEM 与
+   双棘轮路径更新。
 6. **旁路安全边界**：内存密钥擦除（zeroize）、RNG 独立性论证、防故障注入未覆盖；
    已覆盖的是恒时比较惯例与 fail-closed 的错误处理面。
 
