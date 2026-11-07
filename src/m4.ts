@@ -30,6 +30,18 @@ export interface SealedFrame {
   ct: string;
 }
 
+/** 可恢复的棘轮状态快照（含密钥材料，仅允许进入加密信封，严禁明文落盘） */
+export interface M4State {
+  v: 1;
+  self: string;
+  peer: string;
+  headOut: string;
+  headIn: string;
+  outSeq: number;
+  inCursor: number;
+  skipped: Array<[number, string]>;
+}
+
 const sha = (a: Uint8Array, b: Uint8Array): Uint8Array => {
   const c = new Uint8Array(a.length + b.length);
   c.set(a, 0);
@@ -119,6 +131,33 @@ export class M4Channel {
     } catch {
       throw new Error(`m4 poly1305 failure at seq=${frame.seq}`);
     }
+  }
+
+  /** 状态快照：进加密信封（keystore），重启后用 restore 精确续接链位置 */
+  exportState(): M4State {
+    return {
+      v: 1,
+      self: this.selfName,
+      peer: this.peerName,
+      headOut: b64(this.headOut),
+      headIn: b64(this.headIn),
+      outSeq: this.outSeq,
+      inCursor: this.inCursor,
+      skipped: [...this.skipped.entries()].map(([seq, mk]) => [seq, b64(mk)]),
+    };
+  }
+
+  static restore(st: M4State): M4Channel {
+    const c = new M4Channel(new Uint8Array(32), st.self, st.peer); // 占位 root，立即被覆盖
+    if (st.v !== 1) throw new Error('m4 state version');
+    c.headOut = unb64(st.headOut);
+    c.headIn = unb64(st.headIn);
+    c.outSeq = st.outSeq;
+    c.inCursor = st.inCursor;
+    c.skipped = new Map(st.skipped.map(([seq, mk]) => [seq, unb64(mk)]));
+    if (c.headOut.length !== 32 || c.headIn.length !== 32) throw new Error('m4 state corrupted (chain head length)');
+    for (const mk of c.skipped.values()) if (mk.length !== 32) throw new Error('m4 state corrupted (mk length)');
+    return c;
   }
 }
 

@@ -13,6 +13,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
+import { writeSecureFile, readSecureFile } from './keystore.js';
 
 export interface Identity {
   user: string;
@@ -93,4 +94,52 @@ export function loadOrCreateIdentity(dataDir: string, user: string): Identity {
   fs.writeFileSync(file, JSON.stringify(ident, null, 2) + '\n');
   console.log(`[identity] identity="${user}" created (x pub: ${ident.xPub.slice(0, 12)}…, kem pub: ${ident.kemPublic.slice(0, 12)}…)`);
   return ident;
+}
+
+// ─────────────────────────── P0：加密信封版身份 ───────────────────────────
+
+const IDENTITY_DOMAIN = 'pqe2e/identity/v1';
+
+const secureIdentityPath = (dataDir: string, user: string): string =>
+  path.join(dataDir, `identity_${user}.enc`);
+
+/**
+ * 加密身份：存在 `.enc` → 解密加载；存在旧明文 `.json` → 迁移（加密化后删除明文）；
+ * 都不存在 → 生成并直接以信封落盘。
+ * 口令错误/信封损坏 → 抛错（fail-closed，调用方提示后退出）。
+ */
+export function loadOrCreateSecureIdentity(dataDir: string, user: string, pass: string): Identity {
+  const enc = secureIdentityPath(dataDir, user);
+  const stored = readSecureFile<Partial<Identity>>(enc, pass, IDENTITY_DOMAIN);
+  if (stored !== null) {
+    if (stored.user !== user || !isValidIdentityShape(stored)) {
+      throw new Error(`secure identity file corrupted: ${enc}`);
+    }
+    console.log(`[identity] identity="${user}" loaded from encrypted store`);
+    return {
+      user,
+      xSecret: stored.xSecret as string,
+      xPub: stored.xPub as string,
+      kemSecret: stored.kemSecret as string,
+      kemPublic: stored.kemPublic as string,
+      mldSecret: stored.mldSecret as string,
+      mldPublic: stored.mldPublic as string,
+      wSecret: stored.wSecret as string,
+      wPub: stored.wPub as string,
+    };
+  }
+  // 旧明文迁移
+  const legacy = identityPath(dataDir, user);
+  if (fs.existsSync(legacy)) {
+    console.log(`[identity] legacy plaintext identity found — migrating to encrypted store, removing plaintext`);
+    const plain = loadOrCreateIdentity(dataDir, user);
+    writeSecureFile(enc, plain, pass, IDENTITY_DOMAIN);
+    fs.rmSync(legacy);
+    return plain;
+  }
+  const fresh = loadOrCreateIdentity(dataDir, user);
+  writeSecureFile(enc, fresh, pass, IDENTITY_DOMAIN);
+  fs.rmSync(legacy);
+  console.log(`[identity] identity="${user}" stored encrypted (plaintext removed)`);
+  return fresh;
 }

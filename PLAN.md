@@ -114,7 +114,9 @@
 - [x] 身份伪造：全新密钥对自称 alice → 双签虽自洽、TOFU conflict 拒收（`attestation.test`）
 - [x] FS：已用消息密钥不驻留（`inspectState skippedKeys=[]` + 重放测试）
 - [x] 乱序与重连：skipped-cache 迟到帧可解；重启自愈重新握手冒烟（M2 场景）
-- [ ] （未实现·P3）客户端本地密钥文件 argon2id 整定落盘加密
+- [x] 会话持久化（P0）：M4 链位置/乱序缓存/离线队列进 argon2id 加密信封
+      （`persistence.test` 11 例：恢复续链/重放语义不变/信封 fail-closed）
+- [x] 重启零丢失（P0）：冒烟 seq0→1→2 连续，无重握手无 drop；离线帧自动补发
 - [ ] （未实现·P3）群聊（MLS 思路）
 
 ## 5. 测试与验证清单
