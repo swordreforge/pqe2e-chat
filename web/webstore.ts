@@ -5,8 +5,8 @@
  *   视角（无跨设备共享文件），故仍具备 merkle 证明 + attestation + TOFU 三层；
  *   "所有者自愈"的锚定特性在 CLI 端已冒烟实证。
  */
-import { createIdentity, type Identity } from '../src/identity.js';
-import { sealSecure, openSecure, type SecureBlob } from '../src/keystore.js';
+import { createIdentity, type Identity } from '../src/identity.ts';
+import { sealSecure, openSecure, type SecureBlob } from '../src/keystore.ts';
 
 const IDENT_KEY = 'pqe2e.identity';
 const PASS_MIN = 8;

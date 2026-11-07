@@ -194,12 +194,16 @@ bob 上线补发解密。测试：`persistence.test.ts` 11 例（恢复续链/�
 测试：`group.test.ts` 15 例（流语义/乱序/旋转/闸门四组/快照/trust-store 缺陷 fail-closed/
 假 claim 交互必败/持群 seed 冒名必败）。
 
-### 4.6 浏览器端（P2.2 · `web/`）
+### 4.6 浏览器端（P2.2 · `web/`，React + Vite 版）
 
-**密码内核零重写**：`web/main.ts` 直接 import `../src/*` 纯协议模块；浏览器化仅两块垫片——
-`Buffer` polyfill（noble 兼容）与 `esbuild --alias:node:fs=web/fsshim.ts`（内存垫片）。
+**密码内核零重写**：`web/src/App.tsx` 直接 import `src/*` 纯协议模块；标准化构建栈
+（Vite + `@vitejs/plugin-react` + `@tailwindcss/vite` 插件）承担打包与样式；
+浏览器化的唯一"作弊"是 `vite.config.ts` 里的 node 内置模块别名——`node:fs/path/crypto`
+→ `web/fsshim.ts`（内存垫片，且**仅在 WEB_BUILD=1 生效**，不污染 Node 侧测试）。
 持久化走 localStorage 内的 argon2id 信封（同 CLI 语义）；锚定账本为浏览器本机视角
 （跨设备账本共识 = 真 ENS Provider 事，见 §8 限界）。
+**框架化收益**：输入全部走 React ref、列表全走状态驱动渲染——手写版"渲染正常、
+点击读 null"的 DOM 查询故障类被结构性消灭（NOTES #13 的教训成为重写动因）。
 UI 按 Notion Style 令牌实现：`#f7f6f3` 底、`#efedea`/`#e3e1db` hover/active、
 ⋮⋮ 拖柄幻影（`opacity-0 group-hover:opacity-100`）、无渐变/无大圆角/无 translate/scale、
 `prefers-reduced-motion` 全禁过渡。中继同端口挂载静态资源并做目录穿越防护。
@@ -245,8 +249,8 @@ UI 按 Notion Style 令牌实现：`#f7f6f3` 底、`#efedea`/`#e3e1db` hover/act
 4. P1.2：建群 claims 2/3→3/3→epoch1 apply；kick → epoch2 仅剩成员收发；被踢者拒收；
 5. P2.1：3 块锚定账本（哈希链+签名）、merkle root 打印、"not yet anchored"→锚定 match；
    篡改账本 → owner 重发布自愈；
-6. P2.2：`pnpm web:build`（334KB bundle + Minified tw.css，**零外部 CDN**）→ 同端口
-   静态挂载、404/穿越防护、UI 装配自检（NOTES #13）、外部引用计数=0 验证（NOTES #14）。
+6. P2.2：`pnpm web:build`（React+Vite 产物：哈希 js/css + sourcemap，**零外部 CDN**）→
+   同端口静态挂载、404/穿越防护、构建产物断言（`web-ui.test`：root/资源/零外链）。
 
 ## 7. 工程实践资产
 

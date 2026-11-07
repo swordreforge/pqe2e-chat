@@ -19,7 +19,7 @@ import { PROJECT } from './version.js';
 
 const PORT = Number(process.env.PORT ?? 9090);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WEB_DIR = path.join(__dirname, '..', 'web');
+const WEB_DIR = path.join(__dirname, '..', 'web', 'dist');
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

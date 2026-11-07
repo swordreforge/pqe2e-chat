@@ -14,8 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "web:build": "pnpm web:css && esbuild web/main.ts --bundle --format=iife --outfile=web/bundle.js --sourcemap --alias:node:fs=./web/fsshim.ts --alias:node:path=./web/fsshim.ts --alias:node:crypto=./web/fsshim.ts --log-level=warning",
-    "web:css": "tailwindcss -i web/tw-src.css -o web/tw.css --minify"
+    "web:build": "WEB_BUILD=1 vite build"
   },
   "dependencies": {
     "@noble/ciphers": "2.4.0",
@@ -23,16 +22,25 @@
     "@noble/hashes": "2.4.0",
     "@noble/post-quantum": "0.7.1",
     "buffer": "6.0.3",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "ws": "8.22.1"
   },
   "devDependencies": {
     "@tailwindcss/cli": "4.3.4",
+    "@tailwindcss/vite": "4.3.4",
+    "@types/jsdom": "30.0.0",
     "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@types/ws": "8.18.2",
+    "@vitejs/plugin-react": "6.2.1",
     "esbuild": "0.28.2",
+    "jsdom": "31.0.0",
     "tailwindcss": "4.3.4",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
+    "vite": "8.3.6",
     "vitest": "5.1.0"
   }
 }
