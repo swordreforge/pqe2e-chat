@@ -116,10 +116,12 @@
 pnpm install        # 版本钉死（TOOLCHAIN.md）
 pnpm typecheck && pnpm test
 pnpm server                          # 终端1（先 fuser -k 9090/tcp 清残留）
-PQE2E_PASS=... pnpm client -- alice  # 终端2；bob/carl 同理（口令=设备解锁密钥）
+PQE2E_PASS=... pnpm client -- alice  # 终端2 CLI 端；bob/carl 同理（口令=设备解锁密钥）
 # 1:1 聊天：直接输入一行 → 自动逐对端加密群发
 # 群聊（P1）：#g help / #g create <gid> <name> <成员...> / #<gid> <text>
 #            #g add <gid> <m>（creator·新成员须在线）/ #g kick <gid> <m> / #g list
+# 浏览器端（P2.2）：pnpm web:build 后打开 http://localhost:9090（Notion 风格 UI，
+#   与 CLI 端同协议互通——同一 WSS、同一线格式、同一密码内核）
 # 抓包演示：tcpdump -i lo port 9090 -X —— 全程 base64 密文（msg/cntl/gmsg 均不可读）
 ```
 

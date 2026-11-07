@@ -36,7 +36,8 @@ export function identityPath(dataDir: string, user: string): string {
   return path.join(dataDir, `identity_${user}.json`);
 }
 
-function createIdentity(user: string): Identity {
+/** 全新生成身份（web 端复用此纯函数，持久化由各自信封承载） */
+export function createIdentity(user: string): Identity {
   const xk = x25519.keygen();
   const kk = ml_kem768.keygen();
   const mk = ml_dsa65.keygen();

@@ -13,18 +13,21 @@
     "client": "tsx src/client.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "web:build": "esbuild web/main.ts --bundle --format=iife --outfile=web/bundle.js --alias:node:fs=./web/fsshim.ts --alias:node:path=./web/fsshim.ts --alias:node:crypto=./web/fsshim.ts --log-level=warning"
   },
   "dependencies": {
     "@noble/ciphers": "2.4.0",
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
     "@noble/post-quantum": "0.7.1",
+    "buffer": "6.0.3",
     "ws": "8.22.1"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
     "@types/ws": "8.18.2",
+    "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.1.0"

@@ -135,9 +135,14 @@
       链签名必检/三态 match 冲突）；真 ENS 时替换 `AnchorProvider` 两函数即可
       （REPORT §3 T2 注有映射）。附加特性：** owner 重发布自愈**——历史块被改后,
       所有者下一次诚实发布会覆盖之（ENS setText 语义）。
-- [ ] （未实现·P2.2）真链 Provider（测试网 ENS 合约调用；需 RPC + 资金私钥，
-      接口缝线已留）/ 目录_InsertOnly_轻客户端证明
-- [ ] （未实现·P3）浏览器前端（可选加分项）
+- [x] **浏览器前端（P2.2 · Notion Style）**：`web/` 复用全部纯协议模块
+      （fs 经 esbuild alias → 内存垫片；身份/trust/锚定走 localStorage argon2id 信封），
+      支持注册、1:1（混合 PQXDH+M4）、群聊创建/收发（epoch 声明制全流程）、
+      目录四层验证；UI 按 Notion 令牌（#f7f6f3 底、#efedea hover、⋮⋮ 拖柄幻影、
+      无渐变/无大圆角/无 translate/scale 动画/reduced-motion 位）。静态资源由
+      中继服务器同端口挂载（含目录穿越防护）。
+- [ ] （未实现·P2.3）真链 Provider（测试网 ENS 合约调用；需 RPC + 资金私钥，
+      接口缝线已留）；浏览器锚定跨设备账本共识
 
 ## 5. 测试与验证清单
 

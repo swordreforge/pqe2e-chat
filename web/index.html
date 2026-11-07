@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="h-full">
+<!--
+  pqe2e-chat · 抗量子端到端加密聊天（浏览器演示端）
+  视觉规范：Notion Style（米色 #f7f6f3 底、微边框、Block Highlighting、Drag Handle Illusion、
+  无渐变/无大圆角/无 translate/scale 动画）。离线演示注意：Tailwind 走 CDN，需缓存或改本地副本。
+-->
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pqe2e-chat · 抗量子端到端加密</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { notion: { bg: '#f7f6f3', hover: '#efedea', active: '#e3e1db', text: '#37352f', blue: '#2eaadc', red: '#eb5757', green: '#0f7b6c' } } } },
+    };
+  </script>
+  <style>
+    body { font-family: ui-sans-serif, -apple-system, "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif; }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body class="h-full bg-[#f7f6f3] text-[#37352f]">
+  <!-- 顶栏（Notion 导航骨架：白底 + border-gray-200） -->
+  <nav class="bg-white border-b border-gray-200 px-4 md:px-6">
+    <div class="flex items-center justify-between max-w-6xl mx-auto gap-4 h-12">
+      <div class="font-semibold text-gray-900 text-lg">pqe2e-chat</div>
+      <div class="flex items-center gap-3 text-sm text-gray-600">
+        <span id="dot" class="w-2 h-2 rounded-sm bg-[#eb5757] inline-block"></span>
+        <span id="st-text">未连接</span>
+        <span id="merkle" class="font-mono text-gray-400"></span>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-6xl mx-auto px-4 md:px-6 py-6">
+    <!-- 连接/注册面板 -->
+    <section id="connect-panel" class="bg-white rounded-lg border border-gray-200 p-4 md:p-6">
+      <h1 class="font-semibold text-gray-900 text-xl mb-1">开始会话</h1>
+      <p class="text-sm text-gray-600 mb-4">钱包即身份 · ML-KEM-768 + X25519 混合协商 · Double Ratchet · 目录经 Merkle 证明与锚定校验</p>
+      <div class="flex flex-col md:flex-row gap-3">
+        <input id="srv" value="ws://localhost:9090" placeholder="ws://localhost:9090"
+          class="md:w-56 px-0 py-1 bg-transparent border-0 border-b border-transparent text-gray-900 text-sm focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-all" />
+        <input id="username" placeholder="用户名（如 alice）"
+          class="md:w-40 px-0 py-1 bg-transparent border-0 border-b border-transparent text-gray-900 text-sm focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-all" />
+        <input id="pass" type="password" placeholder="设备口令（min 8）"
+          class="md:w-48 px-0 py-1 bg-transparent border-0 border-b border-transparent text-gray-900 text-sm focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-all" />
+        <button id="connect"
+          class="rounded-md text-sm font-medium transition-colors duration-150 bg-[#2eaadc] text-white hover:bg-[#2896c4] active:bg-[#2383e2] px-3 py-1.5">
+          连接
+        </button>
+      </div>
+    </section>
+
+    <!-- 工作区 -->
+    <section class="flex flex-col md:flex-row gap-4 mt-4 items-start">
+      <!-- 侧栏（米色，页面列表感） -->
+      <aside class="w-full md:w-64 shrink-0 border border-gray-200 rounded-lg bg-[#f7f6f3] overflow-hidden">
+        <div class="px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200">联系人 / 群组</div>
+        <div id="roster-list"></div>
+        <div class="px-3 py-2 text-xs font-semibold text-gray-500 border-b border-t border-gray-200 mt-2">群组</div>
+        <div id="group-list"></div>
+        <div class="p-3 space-y-2 border-t border-gray-200">
+          <input id="g-gid" placeholder="群 id" class="w-full bg-transparent border-0 border-b border-transparent text-sm text-gray-900 focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-all" />
+          <input id="g-name" placeholder="群名" class="w-full bg-transparent border-0 border-b border-transparent text-sm text-gray-900 focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-all" />
+          <input id="g-members" placeholder="成员（逗号分隔）" class="w-full bg-transparent border-0 border-b border-transparent text-sm text-gray-900 focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-all" />
+          <button id="g-create"
+            class="w-full rounded-md text-sm font-medium bg-transparent text-[#37352f] hover:bg-[#efedea] active:bg-[#e3e1db] transition-colors duration-150 border border-gray-200 py-1.5">
+            创建群（成员须在线 · 6s roll 窗口）
+          </button>
+        </div>
+      </aside>
+
+      <!-- 会话主区（白卡片） -->
+      <div class="flex-1 w-full bg-white rounded-lg border border-gray-200 flex flex-col h-[60vh] md:h-[560px]">
+        <div class="px-4 py-2 border-b border-gray-200 text-sm text-gray-500 flex items-center justify-between">
+          <span id="target-label">（未选择会话）</span>
+          <span class="font-mono text-xs text-gray-400">端到端密文经不可信中继</span>
+        </div>
+        <div id="timeline" class="flex-1 overflow-y-auto divide-y divide-gray-100 p-2"></div>
+        <div class="p-3 border-t border-gray-200 flex gap-2">
+          <input id="chat-input" placeholder="输入消息 · Enter 发送"
+            class="flex-1 px-0 py-1.5 bg-transparent border-0 border-b border-transparent text-gray-900 text-sm focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-all" />
+          <button id="send"
+            class="rounded-md text-sm font-medium transition-colors duration-150 bg-[#2eaadc] text-white hover:bg-[#2896c4] active:bg-[#2383e2] px-4">
+            发送
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <footer class="text-xs text-gray-400 mt-6 pb-8">
+      课程作业演示 · Rust/TS 双栈选型的 TS 线 · 密码面：FIPS 203/204（noble）· 无服务器信任假设
+    </footer>
+  </main>
+  <script src="/bundle.js"></script>
+</body>
+</html>
