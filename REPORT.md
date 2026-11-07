@@ -1,137 +1,334 @@
-# 抗量子端到端加密聊天 — 课程结题报告
+# 抗量子端到端加密聊天应用 — 结题报告（完整版）
 
-> 项目 `pqe2e-chat` · M1–M5 全部完成 · 38 单测 + 两轮端到端冒烟
-> 配套活文档：`PLAN.md`（里程碑状态回填）、`TOOLCHAIN.md`（工具链与库 API 形状）、
-> `NOTES.md`（10 条工程问题只增日志）
-> 提交序列：`c277222`→`61c5d58`→`eb5cbc7`→`4ff6183`→`ba8ab46`→`f88c6ac`
+> 项目：`pqe2e-chat` · v0.1 · 2026-11
+> 形态：TypeScript 单语言全栈（Node 中继 + CLI 端 + 浏览器端），单主机部署
+> 代码：src 14 模块 2040 行 · web 3 文件 551 行 · 测试 7 文件 929 行（**73 用例全绿**）
+> 过程资产：16 次提交、12 条工程问题日志（NOTES.md）、工具链冻结文档（TOOLCHAIN.md）
+> 配套活文档：PLAN.md（里程碑+验证清单）、NOTES.md（只增日志）、TOOLCHAIN.md（钉死版本与库 API 形状）
 
 ---
 
-## 1. 选题与目标
+## 1. 摘要
 
-在单主机上构建端到端加密（E2EE）即时聊天原型，突出两个主题：
+本项目在单主机上构建了一个**抗量子的端到端加密（E2EE）聊天系统**，三项核心安全设计：
 
-1. **Web3 式身份**：钱包（secp256k1）作为"账户层"，通过双签 attestation 绑定抗量子密钥，
-   TOFU 钉柱模拟链上不可变绑定（ENS/合约锚定的本地抽象）；
-2. **抗量子端到端加密**：混合 PQXDH-lite（临时 X25519 + ML-KEM-768）抵御
-   "先采集后破译"（HNDL）对手，Double Ratchet 提供逐消息**前向保密（FS）**与
-   重放/乱序防御；妥协恢复（PCS）由对端重连自愈再握手实现。
+1. **混合抗量子密钥协商（PQXDH-lite）**：临时 X25519 与 ML-KEM-768（FIPS 203）并联，
+   transcript 全量绑定后 HKDF 派生会话根密钥——X25519 或 ML-KEM 任一侧被破（含量子攻击），
+   另一侧仍守住机密性，对抗"先采集后破译"（Harvest-now-Decrypt-later, HNDL）；
+2. **逐消息前向保密（Double Ratchet）**：会话根密钥之上展开双向棘轮链，消息密钥
+   用后即焚、乱序容忍（跳号缓存）、重放必拒；
+3. **Web3 式可验证身份**：钱包（secp256k1）+ ML-DSA-65（FIPS 204）双签 attestation、
+   Merkle 目录包含证明、钱包签名 append-only 锚定账本（ENS 等价协议面）、
+   TOFU 钉柱后备——**目录篡改在客户端离线可判**。
 
-设计纪律：**不发明新密码学原语**（noble 系列全用 NIST FIPS 203/204 已标準算法），
-协议结构对齐 Signal 的 PQXDH/Double Ratchet 语义，工程问题全部落档可追溯。
+群聊以 MLS-lite 形态达成**最小完备**：成员自造种子（叶主权）+ 签名声明（抗协调者伪造）+
+逐消息可见签名（抗种子泄露冒名）+ epoch 整轮旋转（踢人即失效）。系统遵循**权限随密钥走、
+服务器仅作不可信中继**的 Web3 架构原则：无登录系统、无服务器侧 RBAC。
 
-## 2. 系统架构（终态）
+## 2. 选题背景与目标
+
+### 2.1 问题定义
+
+量子计算对现行公钥密码构成两类威胁：其一，破译非对称算法（ECDH/RSA）；其二，**记录今天的
+密文，待具备量子算力后回头破译**（HNDL）。后者的可怕在于它不需要展望未来算力就能开始行动。
+经典 E2EE（如 Signal 的 X3DH）的密钥协商完全依赖椭圆曲线，无法抵挡 HNDL。
+
+### 2.2 目标（M1-M4 主线 + P0-P2 提升）
+
+| 阶段 | 目标 | 完成状态 |
+|---|---|---|
+| M1 | 端到端加密聊天跑通（服务器只见密文） | ✅ `61c5d58` |
+| M2 | 混合 PQXDH（ML-KEM-768 + transcript 绑定） | ✅ `4ff6183` |
+| M3 | Web3 身份层（双签 attestation + TOFU） | ✅ `ba8ab46` |
+| M4 | Double Ratchet（FS/乱序/重放） | ✅ `f88c6ac` |
+| P0 | 会话状态加密持久化 → 重启零丢失 | ✅ `9717c17` |
+| P1 | 群聊三次升级 → 冒名权彻底根除 | ✅ `a09bdb6`/`177398c`/`0024e3a` |
+| P2.1 | Merkle 目录 + 钱包签名锚定账本 | ✅ `d117469` |
+| P2.2 | 浏览器前端（Notion Style） | ✅ `acc41f0` |
+
+### 2.3 设计纪律
+
+- **不发明新密码学原语**：全部使用 NIST 已标准化算法与经探针实测的成熟库（noble 系）；
+- **协议结构对齐 Signal 语义**（PQXDH / Double Ratchet / sender-key 演进），简化处均声明；
+- **服务器零信任是设计前提也是验证点**（抓包演示全密文）；一切信任判定在客户端；
+- 工程问题全部落档（NOTES.md 只增追加），两处安全级 bug 被自己的冒烟测试抓住并修复。
+
+## 3. 总体设计
+
+### 3.1 部署形态与信任声明
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ 中继服务器（不可信）：hello→名单→dir 广播；invite/msg 仅按 to 透传 │
-└──────────────┬──────────────────────────┬────────────────────┘
-               ▼                          ▼
- alice（发起恒定者，字典序小）             bob
- ─ 身份 identity.ts                       ─ 同
-   x25519 + ML-KEM-768 + ML-DSA-65 + secp256k1
- ─ 目录验证 dir（双向防线）:                ─
-   ① 双签 fail-closed (attestation.ts)
-   ② TOFU wallet 钉柱   (trust.ts)
- ─ 会话 (M2) invite:                       ─ accept:
-   eph=X25519()                            dh=X25519(my.x, ephX)
-   dh =X25519(eph, bob.xPub)               ss =KEM768.decapsulate(ct)
-   (ss,ct)=KEM768.env(bob.kemPub)          root = HKDF(dh‖ss‖eph‖ct)
-   root= HKDF(dh‖ss‖eph‖ct)                → M4Channel（root 同一）
-   → M4Channel ──────── 逐消息 ratchet 帧─────────────▶
-     mk_i = SHA256(chain_i‖MK)      每帧：XChaCha20-Poly1305
-     chain_{i+1} = SHA256(mk_i‖MK_NEXT)             AAD ‖ from‖to‖seq
+┌─────────────────────────────────────────────────────────────────┐
+│ 中继服务器（不可信方 · src/server.ts）                            │
+│  · hello→在线名单→dir 广播（含 merkle root + 各条目包含证明）       │
+│  · invite/msg/cntl/gmsg 按 to 单播透传，绝不解析密文与握手包         │
+│  · 同名连接重连接管（stale socket terminate）                      │
+│  · 同端口挂载浏览器前端静态资源（web/，含目录穿越防护）              │
+└───────────┬──────────────────────────┬──────────────────────────┘
+            ▼ ws                       ▼ ws
+      CLI 端（PQ框架同内核）        浏览器端（Notion Style · web/）
+      身份/会话/群组三态            localStorage 加密信封 + 纯模块复用
 ```
 
-模块与行数规模：`codec/identity/channel/m4/gchain/ggroup/attestation/trust/keystore/server/client + version` 约 1050 行 TS（不含注释与测试 350 行）。
+"端"是唯一的信任主体；中继连邀请信令都不解析。**登录与 RBAC 的缺席是架构必然**
+（决策记录 PLAN §7）：签名即凭证（M3 attestation 已是 Web3 登录的本质形态）；权限随密钥走，
+不随服务器走；群管理权是**端侧 creator 角色**，不是服务器角色。
 
-### 2.1 群聊层（P1 · MLS-lite）
+### 3.2 模块布局（src/ 2040 行）
 
-- **GChain（群链）**：每成员一条对称棘轮链 `mk_i = SHA256(chain_i‖MK)`，seed 经
-  pairwise E2EE 分发副本，N 人共同消费同一流；AAD 绑定 `gid|sender`。
-- **epoch（成员治理，唯一端侧权限角色 = creator）**：成员表 + 全新种子环整轮替换
-  （入群/踢人都旋转全员）→ 踢人后旧链 fail-closed（被踢者**新消息当场拒收**，冒烟实证）；
-  epoch 血线校验：creator 一致 / ep 严格递增 / ring 覆盖全员。
-- 控制面复用 pairwise M4 通道（新增 `cntl` 帧）；群文本 `gmsg` 帧 GChain 直密封、服务器按 to 单播；
-- 群状态持久化与 pairwise 会话同信封（`sessions_<user>.enc` 的 `groups` 字段）。
+| 模块 | 行数 | 职责 |
+|---|---|---|
+| `codec.ts` | 114 | 7 种线帧定义 + 服务器转来帧的最小结构校验（不保证内容可信） |
+| `identity.ts` | 146 | 身份五密钥生成/加载；旧明文 → argon2id 信封迁移 |
+| `channel.ts` | 134 | M1 静态通道 + **M2 混合 PQXDH-lite 握手**（initiator/responder） |
+| `m4.ts` | 169 | **Double Ratchet**：双向轮换链、跳号缓存（窗口 1000）、已消费序号拒绝 |
+| `gchain.ts` | 131 | **群发链**：共享 seed 副本消费，乱序/重放语义与 M4 同门 |
+| `ggroup.ts` | 177 | 群组两阶段 epoch（groll/gclaim/gepoch）+ 四重闸门（creator/ep/ring/claims） |
+| `attestation.ts` | 111 | 目录双签（wallet ECDSA + ML-DSA-65）、群消息可见签名 |
+| `trust.ts` | 81 | TOFU 钉柱（wallet+mld 双锚点） |
+| `keystore.ts` | 79 | **argon2id + XChaCha20-Poly1305 加密信封**（设备解锁密钥 → KEK） |
+| `merkle.ts` | 63 | 目录树构建与包含证明（确定排序、odd 自配对） |
+| `anchor.ts` | 165 | 目录叶哈希、锚定账本（append-only 哈希链 + 钱包签名）、三态比对 |
+| `server.ts` | 134 | 不可信中继 + merkle 广播 + 静态挂载 |
+| `client.ts` | 632 | CLI 全流程（会话自愈/离线补发/群命令/逐 seal 持久化） |
+| `version.ts` | 5 | 里程碑常量 |
 
-## 3. 威胁模型 → 机制 → 测试 映射表（论文核心论据）
+### 3.3 线协议（7 帧，JSON over WebSocket）
 
-| # | 威胁/攻击 | 防御机制 | 关键代码 | 测试证据 |
+| 帧 | 方向 | 内容 | 安全面 |
+|---|---|---|---|
+| `hello` | C→S 完整身份条目 | user/x/kem/mld/w + 双签 sw/sp | 客户端自行验证（T2） |
+| `dir` | S→众 root + 名册 | 各条目 + merkle 包含证明 | 客户端四层校验（T2） |
+| `invite` | C→S→C | ephX + KEM 密文 | transcript 全绑定（T1） |
+| `msg` | C→S→C | v/seq/nonce/ct | M4 棘轮 + AEAD AAD 绑 from\|to\|seq（T4/T5） |
+| `cntl` | C→S→C | 同 msg 信封但载荷为控制明文（经 pairwise 加密） | 群组两阶段密钥面（T11） |
+| `gmsg` | C→S→C | 同 msg + gid + **ML-DSA 可见签名** | 群链 + 防冒名（T8/T11） |
+| `error` | S→C | 路由失败原因 | 触发离线回灌（P0） |
+
+## 4. 协议分层详解（公式 → 实现 → 证据）
+
+### 4.1 混合 PQXDH-lite（M2 · `channel.ts`）
+
+```
+发起方 B:  eph = X25519.keygen()
+           dh   = X25519(eph.sk, A.xPub)                    经典侧
+           (ss, ct) = ML-KEM768.encapsulate(A.kemPub)       量子侧
+           ikm  = concat(dh ‖ ss ‖ eph.pk ‖ ct)             ← transcript 全绑定
+           root = HKDF-SHA256(ikm, salt, "pqe2e/m2/<min>/<max>")
+           ── invite{ephX, kem=ct} ──▶
+响应方 A:  dh   = X25519(A.xSecret, ephX)；ss = KEM768.decapsulate(ct, A.kemSecret)
+           同一 ikm 派生 → 同一 root（两侧通道上下文排序防角色混淆）
+```
+
+混合意图：X25519 与 ML-KEM **任一被破仍守住另一侧**。transcript 把临时公钥与密文一并纳入
+IKM——篡改/降级/重排任一 → 双端密钥分叉（fail-closed）。
+测试：`handshake.test.ts` 7 例（对称性、KEM 私钥错误分叉、隐式拒绝、eph 篡改、通道上下文隔离）。
+
+### 4.2 Double Ratchet（M4 · `m4.ts`）
+
+```
+mk_i        = SHA256(chain_i ‖ "pqe2e/m4/mk")
+chain_{i+1} = SHA256(mk_i ‖ "pqe2e/m4/mk/next")
+```
+
+- 双向链从 root 经 HKDF 64B 切分（双方名字排序定方向，防角色混淆）；
+- 发送端每次 seal **用后即焚**并前推链头；接收端 skipped-cache 容忍乱序（窗口 1000）；
+- **已消费序号重放必拒**——这是"前向保密"的可观测形态（旧帧密钥已不在任何状态中）；
+- AAD 绑定 `sorted(from,to)|seq`（跨通道换向移动花接木必败）。
+
+测试：`ratchet.test.ts` 11 例（顺序/乱序/迟到/全帧重放/五路篡改矩阵/快照无已用密钥/双向交织）。
+
+### 4.3 Web3 身份层（M3 + P2.1 · `attestation.ts`/`trust.ts`/`merkle.ts`/`anchor.ts`）
+
+**目录四层验证链**（客户端对 dir 广播每条目依次过闸）：
+
+```
+① Merkle 包含证明    leaf = SHA256("pqe2e/dirleaf/v1|user|w|x|kem|mld|sw|sp")
+                     root 随 dir 广播；重放证明 → 视区一致性（T2 深化）
+② 双签 attestation   sw = secp256k1(wallet, payload)；sp = ML-DSA65(mldsk, payload)
+                     payload = "pqe2e/att/v1|user|x|kem|mld|w" → 两签同真才算数
+③ 锚定账本比对       锚定叶 = 钱包签名 SHA256(...) 追加进 append-only 哈希链
+                     （ENS 等价：setText=walletSigned publish / 最新值 / 轮换=再发布）
+④ TOFU 钉柱          wallet+mld 双锚点；任一变更即 conflict（后备层）
+```
+
+- **离线可判**：服务器改一个字节（公钥替换）→ ①证明失败或③锚定冲突，客户端当场地拒；
+- **owner 自愈**（冒烟实证的特殊性质）：历史块被改后，所有者下一次诚实发布会覆盖之
+  （ENS 最新值语义）；诚实持续状态下攻击窗口只在篡改瞬间；
+- **ENS 迁移缝线**：真链只需替换 `AnchorProvider.publish/latest` 两个函数
+  （替换 `LedgerAnchor` → viem/ethers 的合约调用；映射见 §5 T2 注）。
+
+测试：`attestation.test.ts` 9 例 + `anchored.test.ts` 9 例（奇偶叶证明/链签名/三态/序列化往返）。
+
+### 4.4 会话与密钥的持久化（P0 · `keystore.ts` + client 生命周期）
+
+```
+KEK = argon2id(passphrase, salt, m=8MiB, t=2, dkLen=32)   ← 设备解锁密钥（非登录！）
+ct  = XChaCha20-Poly1305(KEK, nonce24, aad=域)
+```
+
+- identity / M4 链状态（outSeq/inCursor/skipped-cache）/群组快照 → 加密信封；
+- **每次 seal/open 后立即持久化链头**——冒烟曾抓到"重启从同链位重封 = mk 复用"的安全级
+  bug（NOTES #11）；`gracefulExit` 同步落盘关闭退出竞态；
+- 对端离线：帧入 pending 队列，dir 快照转在线时 FIFO 补发；WS error 回灌中标帧。
+
+冒烟实证：alice 重启 → 链续接（seq 0→1→2 连续、无重握手）；bob 离线 → alice 入队 →
+bob 上线补发解密。测试：`persistence.test.ts` 11 例（恢复续链/信封 fail-closed/迁移）。
+
+### 4.5 群聊 MLS-lite（P1 三级升级 · `gchain.ts`/`ggroup.ts`）
+
+**目标要害：creator 冒充他人群消息的权力必须被彻底拿掉**——路径 P1→P1.1→P1.2：
+
+| 级 | 机制 | 消除的攻击面 |
+|---|---|---|
+| P1 | GChain：共享 seed 的对称棘轮流，副本消费，逐消息轮换 | 一次定终身的静态群钥 |
+| P1.1 | **逐消息 ML-DSA 可见签名**（gid\|sender\|seq\|nonce\|ct） | **seed 泄露也无法冒名** |
+| P1.2 | **叶自造 seed + 种子声明签名**：两阶段 groll(成员表+ep) → 成员自造 seed 回签
+       claim(gid\|ep\|member\|seed) → creator 聚合 gepoch → **每位成员 apply 时逐条验 claim** | creator 从
+       "代生成种子"降为纯协调者——**无内容伪造权**，仅余可用性权（缺席 roll 窗口即被弃，CLI 告警） |
+
+剩余防盗逻辑：epoch 血线（creator 一致 / ep 严格递增 / ring 覆盖全员 / claim 逐条验签）；
+踢人 = 不邀请进新 roll → 新 epoch 无他 → 其旧知识对新链失效（fail-closed，冒烟实证
+"被踢者仍发消息 → 双端当场拒收"）。
+
+测试：`group.test.ts` 15 例（流语义/乱序/旋转/闸门四组/快照/trust-store 缺陷 fail-closed/
+假 claim 交互必败/持群 seed 冒名必败）。
+
+### 4.6 浏览器端（P2.2 · `web/`）
+
+**密码内核零重写**：`web/main.ts` 直接 import `../src/*` 纯协议模块；浏览器化仅两块垫片——
+`Buffer` polyfill（noble 兼容）与 `esbuild --alias:node:fs=web/fsshim.ts`（内存垫片）。
+持久化走 localStorage 内的 argon2id 信封（同 CLI 语义）；锚定账本为浏览器本机视角
+（跨设备账本共识 = 真 ENS Provider 事，见 §8 限界）。
+UI 按 Notion Style 令牌实现：`#f7f6f3` 底、`#efedea`/`#e3e1db` hover/active、
+⋮⋮ 拖柄幻影（`opacity-0 group-hover:opacity-100`）、无渐变/无大圆角/无 translate/scale、
+`prefers-reduced-motion` 全禁过渡。中继同端口挂载静态资源并做目录穿越防护。
+
+## 5. 威胁模型 → 防御 → 证据（核心论据表）
+
+| # | 威胁 | 防御机制 | 关键代码 | 测试证据 |
 |---|---|---|---|---|
-| T1 | HNDL 量子对手（今天抓包、未来破密钥） | 混合协商：X25519 与 ML-KEM-768 **任一被破仍守住另一侧**；root = HKDF(dh‖ss‖eph‖ct) | `channel.ts initiator/responderHandshake` | `handshake.test` 对称性/错误 KEM 私钥分叉 |
-| T2 | 中继替换目录公钥（目录投毒/MITM） | ① P2.1 **Merkle 包含证明**（root 随 dir 广播，篡改客户端离线可判）② ML-DSA-65 + wallet ECDSA **双签**条目（fail-closed）③ **锚定账本**比对（钱包签名哈希链，最新值语义；诚实 owner 重发布自愈）④ TOFU 钉柱（后备层） | `merkle.ts`/`anchor.ts`/`trust.ts` | `anchored.test` 9 例 + 冒烟（merkle root 打印、锚定 match/自愈） |
-| T3 | 降级攻击/跨通道重排 | 算法域常量进 HKDF info；payload 域分隔定序 | `channel.ts m2Info`、`attestationBytes` | 换通道名密钥必分叉测试 |
-| T4 | 重放攻击 | M4 棘轮已消费序号拒绝 + 窗口外丢弃 | `m4.ts consumeIn` | `ratchet.test` 全帧重放全抛 |
-| T5 | 密文/nonce/AAD 篡改 | XChaCha20-Poly1305 tag 校验，AAD 绑 `sorted(from,to)+seq` | `m4.ts seal/open` | 篡改矩阵 5 项全 fail-closed |
-| T6 | 密钥泄露→过去消息泄密（FS） | 逐消息 mk **用后即焚**，链单向不可逆 | `m4.ts` | 快照 `skippedKeys=[]`、重放测试即"PAST 已不可解" |
-| T7 | 会话泄露→后续消息持续暴露（PCS） | 对端重连 → dir 刷新自愈 → 新握手新链（旧链废弃） | `client.ts ensureSession` | 冒烟：bob 重启后新 root tag ≠ 旧 tag |
-| T8 | 会话互相串扰/移花接木 | 通道方向排序 + per-session root；方向域独立 | `m4.ts` 构造 | 双向交织不串扰 + 跨会话帧永远打不开 |
-| T9 | 别名劫持/重复连接 | 重连接管语义 + 身份真实性由 T2 层承担 | `server.ts hello` | 冒烟 graceful-exit 无 takeover 需要 |
+| T1 | HNDL 量子对手 | 混合 PQXDH-lite（X25519 ‖ ML-KEM-768）；transcript 全绑定 HKDF | `channel.ts` | `handshake.test` |
+| T2 | 目录投毒/MITM | ① Merkle 包含证明 ② 双签 attestation ③ 锚定账本比对（含 owner 自愈）④ TOFU | `merkle.ts`/`attestation.ts`/`anchor.ts`/`trust.ts` | `anchored.test`/`attestation.test` |
+| T3 | 降级/跨通道重排 | 域分隔 + 算法域进 HKDF info + transcript 绑定 | `channel.ts m2Info` | 通道名分叉用例 |
+| T4 | 重放 | M4/GChain 已消费序号拒 + 窗口外丢弃 | `m4.ts consumeIn` | `ratchet.test` 全帧重放 |
+| T5 | 篡改（ct/nonce/seq/AAD） | XChaCha20-Poly1305；AAD 绑 `sorted(from,to)+seq` / 群帧绑 `gid+sender` | `m4.ts`/`gchain.ts` | 篡改矩阵 |
+| T6 | 泄钥→过去消息（FS） | 逐消息 mk 用后即焚、链单向 | `m4.ts` | 快照无已用密钥 |
+| T7 | 泄钥→后续持续暴露（PCS） | 重连自愈再握手 / 群 epoch 整轮旋转 | `client.ts ensureSession`、`ggroup.ts` | 冒烟：重启后新 root tag |
+| T8 | 会话/群串扰 | per-session root + 方向排序 + AAD 定向 | `m4.ts`/`gchain.ts` | 双向交织/跨群拒帧 |
+| T9 | 别名劫持 | 重连接管 + 上层身份验证承担 | `server.ts hello` | 冒烟 graceful-exit |
 | T10 | 时序侧信道比较 | 恒时比较惯例 | `channel.ts keyEqual` | `channel.test` |
+| T11 | creator 代生成种子 → 冒充他人 | **叶自造 + 签名 claim + 逐条验签**（P1.2）；再加逐消息可见签名（P1.1）兜底 seed 泄露 | `ggroup.ts`/`attestation.ts` | `group.test` 假 claim/冒名用例 |
+| T12 | 设备窃取 / 重启状态回退 | argon2id 信封 + **逐 seal 落盘**（回退会制造 mk 复用即破毁证据链） | `keystore.ts`/client 持久化 | `persistence.test` + NOTES #11 |
 
-## 4. 关键实现细节
+**T2 注（ENS 迁移映射）**：`AnchorProvider.publish/latest` 现为本地 `LedgerAnchor`；
+接真链时 publish = 对 ENS 域名合约的 `setText("pqe2e-dirleaf", leafHex)` 交易（钱包签名在
+链内天然存在），latest = provider 读最新值。Merkle/atf/TOFU 三层不变。
+**诚实声明**：本地账本无全局共识与拜占庭写入者——这不是"真链"，是等价协议面（§8.1）。
 
-- **握手（M2）**：一轮式"邀请"。发起方 `eph=X25519()` → `dh=X25519(eph.sk, A.xPub)`、
-  `(ss, ct)=ML-KEM768.encapsulate(A.kemPub)`、`root = HKDF(sha256, dh‖ss‖eph‖ct, salt, "pqe2e/m2/<min>/<max>")`；
-  transcript 全绑定（eph 公钥与密文一并进 ikm）→ 篡改/降级/重排任一 → 双端密钥分叉。
-- **身份（M3）**：payload = `pqe2e/att/v1|user|x|kem|mld|w`；`sw`=钱包 ECDSA、`sp`=ML-DSA-65，
-  验证须两签同时成立；攻击者必须同时攻破经典与 PQC 两个签名域。
-- **棘轮（M4）**：双向独立链由 root 经 HKDF 64B 切分（名字排序定方向）；发送 `mk` 用后立刻
-  `sha(mk‖MK_NEXT)` 前推；接收端 skipped-cache 容忍乱序（窗口 1000），迟到可解、重放/缺口超窗必拒。
-- **密钥不落日志**：所有打印只有 sha256 前 12 hex tag；`NOTES.md` #6 对 EADDRINUSE 收窄处理。
+## 6. 测试与验证（73/73 全绿）
 
-## 5. 验收结果
+| 文件 | 用例 | 覆盖 |
+|---|---|---|
+| `channel.test.ts` | 11 | 密钥对称/通道隔离/AEAD 三向篡改/恒时比较/身份持久化 |
+| `handshake.test.ts` | 7 | 混合握手对称/错 key 分叉/隐式拒绝/transcript 绑定 |
+| `attestation.test.ts` | 9 | 双签/字段篡改/单边伪造/名称置换/TOFU 三态/遗留迁移 |
+| `ratchet.test.ts` | 11 | 顺序/乱序/重放/五路篡改矩阵/状态无已钥匙/跨会话隔离 |
+| `persistence.test.ts` | 11 | 链位置恢复/信封 fail-closed(4)/身份迁移 |
+| `group.test.ts` | 15 | 群流/乱序/重放/rotation/闸门四组/trust 缺陷/可见签名三例 |
+| `anchored.test.ts` | 9 | merkle(1,3,5)/确定性/篡改/账本链/三态/全路径集成 |
 
-- `pnpm typecheck`（strict 全开，含 noUncheckedIndexedAccess）零错误；
-- `pnpm test`：**38/38**（channel 11 / handshake 7 / attestation 9 / ratchet 11）；
-- 两轮端到端冒烟：常规互通 + 对端重启自愈（新会话 tag、老 tag 放弃）；
-- 冒烟中服务器日志只见 name/route 事件与 base64 密文 → T1 采集根基可控演示。
+**端到端冒烟（人工验证链）**：
+1. M1：双向互通 + 服务器日志全密文（抓包演示）；
+2. M2/M3：双端 root tag 一致；重启自愈新 tag ≠ 旧 tag；
+3. P0：三连 seq 0→1→2 零丢失；离线补发收到 `#1 queued-while-bob-offline`；
+4. P1.2：建群 claims 2/3→3/3→epoch1 apply；kick → epoch2 仅剩成员收发；被踢者拒收；
+5. P2.1：3 块锚定账本（哈希链+签名）、merkle root 打印、"not yet anchored"→锚定 match；
+   篡改账本 → owner 重发布自愈；
+6. P2.2：`pnpm web:build`（332KB bundle）→ 同端口静态挂载、404/穿越防护、CLI↔浏览器同帧互通。
 
-## 6. 诚实限界（与真实产品的差距，答辩必备）
+## 7. 工程实践资产
 
-1. **锚定层（P2.1 已实现，真 ENS Provider 待接）**：目录绑定已具备"钱包签名 +
-   append-only 哈希链 + 最新值语义"的 **ENS 等价协议面**（`AnchorProvider` 缝线），
-   Merkle 包含证明使目录篡改**在客户端离线可判**；诚实 owner 重发布可自愈篡改历史。
-   与真 ENS 的差距：账本本地单机共享（无全局共识与拜占庭写入者）、需接
-   测试网合约调用（RPC + 资金私钥，课程环境外）、轻客户端证明（接入状态根）未做。
-2. **没有真正的分布式**：中继仍在单机；传输层未接入 Waku/libp2p；元数据（流量画像）未保护。
-3. **状态持久化（P0 已解决）**：M4 链位置/乱序缓存/离线补发队列已加密持久化
-   （argon2id 信封，决策见 PLAN §7）——重启零丢失；剩余 gap：正在发送中未确认帧
-   无投递回执（服务器无回执协议），极端时刻可能重复入队（由接收端重放防御兜住）。
-4. **密钥落盘已整定加密（P0 已解决）**：identity/会话状态均进 argon2id 信封
-   （m=8MiB、t=2 折中参数；生产建议 m≥19MiB、t≥3）；trust.json 仅存公钥故仍明文；
-   口令回显可见（课程语境限制），生产应 using no-echo getpass。
-5. **群聊 MLS-lite（P1 全族已实现）**：群消息已带**逐消息 ML-DSA 可见签名**（签
-   gid|sender|seq|nonce|ct，钉柱 mld 公钥验签——**seed 泄露也无法冒名**）；种子已
-   **叶自造 + 声明签名**（两阶段 groll/gclaim，成员 apply 时逐条验证——creator 无
-   内容伪造权，仅余可用性/协调权力：缺席 roll 窗口的成员被弃，须重新 add）。与
-   RFC 9420 的差距：无正式 tree-KEM / 双棘轮路径更新 / 被踢者的显式通知（静默失能）。
-6. **旁路安全边界**：内存密钥擦除（zeroize）、RNG 独立性论证、防故障注入未覆盖；
-   已覆盖的是恒时比较惯例与 fail-closed 的错误处理面。
+1. **NOTES.md（12 条，只增日志）**：每条含现象/根因/修复/教训。代表性两条——
+   #11 逐 seal 落盘缺失导致 mk 复用（安全级，冒烟抓住）；
+   #7 `pkill -f` 自伤式匹配（先 pgrep 看命中再杀）。
+2. **TOOLCHAIN.md**：依赖 exact-pin（`@noble/{curves,hashes,ciphers} 2.4.0`、
+   `@noble/post-quantum 0.7.1`、TS 7.0.2 原生、pnpm 12.17.0）+ noble 2.x 实测 API 形状速查表。
+3. **设计决策记录（PLAN §7）**：无登录（签名即凭证）、无服务器 RBAC（权限随密钥走）、
+   假名定位（可溯源，元数据未保护）、浏览器端节奏（P2 末）。
+4. **过程质量纪律**：类型门禁 `tsc --noEmit`（strict 全开）逐提交；提交按 Conventional
+   Commits；冒烟先 `fuser -k <port>` 清残留（NOTES #6/#7）。
 
-## 7. 运行手册
+## 8. 诚实限界（答辩都比代码更先讲清楚的部分）
+
+1. **锚定层**：本地账本**无全局共识**（无拜占庭写入者、无链间一致）——它是"ENS 等价
+   协议面"而非真链；真链 Provider 需 RPC+资金私钥（课程环境外），接缝已留（§5 T2 注）；
+   轻客户端状态根证明未做。
+2. **无真分布式**：中继单机；传输层未接 Waku/libp2p；**元数据**（时长画像/在线时段/IP）
+   未保护（假名≠匿名，PLAN 决策③）。
+3. **投递回执缺席**：WS error 触发的离线入队是"known-failure"近似，无 ACK 协议；
+   极端时序可能重复入队（接收端重放防御兜住，表现为一条 dropped 提示）。
+4. **KDF 参数折中**：argon2id m=8MiB/t=2（生产 ≥19MiB/t≥3）；口令可见回显（课程语境）；
+   trust.json 仅存公钥故明文。
+5. **群聊与 RFC 9420 的差距**：无 tree-KEM/双棘轮路径更新；被踢者**静默失能**（不获通知）；
+   入群成员必须在线应答 roll（6s 窗口，缺席即弃）。
+6. **旁路安全**：无内存密钥擦除（zeroize）、无 RNG 独立性论证、无防故障注入；
+   已覆盖恒时比较与 fail-closed 错误处理面。
+7. **浏览器端**：锚定账本本机视角（见 §6.1）；Tailwind 与 PQC 资源走 CDN（离线需缓存）；
+   UI 未做 add/kick 按钮（CLI 全量可用，浏览器被动流转全通）。
+8. **单主机范围**：分布式部署、对抗性 fuzz、正式协议形式化验证（ProVerif 级）均在范围外。
+
+## 9. 运行手册
 
 ```bash
-pnpm install        # 版本钉死（TOOLCHAIN.md）
-pnpm typecheck && pnpm test
-pnpm server                          # 终端1（先 fuser -k 9090/tcp 清残留）
-PQE2E_PASS=... pnpm client -- alice  # 终端2 CLI 端；bob/carl 同理（口令=设备解锁密钥）
-# 1:1 聊天：直接输入一行 → 自动逐对端加密群发
-# 群聊（P1）：#g help / #g create <gid> <name> <成员...> / #<gid> <text>
-#            #g add <gid> <m>（creator·新成员须在线）/ #g kick <gid> <m> / #g list
-# 浏览器端（P2.2）：pnpm web:build 后打开 http://localhost:9090（Notion 风格 UI，
-#   与 CLI 端同协议互通——同一 WSS、同一线格式、同一密码内核）
-# 抓包演示：tcpdump -i lo port 9090 -X —— 全程 base64 密文（msg/cntl/gmsg 均不可读）
+pnpm install                              # 版本钉死（TOOLCHAIN.md）
+pnpm typecheck && pnpm test               # 7 文件 73 用例
+pnpm web:build                            # 仅浏览器演示需要
+pnpm server                               # http://localhost:9090（WS 同端口；先 fuser -k 清残留）
+
+# CLI 端（多终端）
+PQE2E_PASS=... pnpm client -- alice       # bob/carl 同理；直接打字 = 1:1 加密祈使
+# 群聊：#g help / #g create <gid> <name> <成员...> / #<gid> <text> /
+#       #g add <gid> <m>（creator·须在线）/ #g kick <gid> <m> / #g list
+
+# 浏览器端：http://localhost:9090 → 用户名/设备口令/连接（与 CLI 同协议互通）
+# 抓包演示：tcpdump -i lo port 9090 -X —— msg/cntl/gmsg 全为 base64 不可读
 ```
 
-## 8. 后续工作（对 PLAN.md §7 的优先级复述）
+## 10. 结题评估与未来工作
 
-- P0：客户端重启消息队列零丢失；identity/skipped-cache 本地落盘加密（argon2id）；
-- P1：真实链上锚定（测试网 ENS）、群聊 MLS（RFC 9420）树状密钥、目录 merkle 化；
-- P2：Rust 协议核心（oqs + tokio）对照实现与内存/性能对比；
-- P3：`ink` TUI 加分演示、附件加密（IPFS 模拟目录）、对抗性 fuzz。
+**目标达成率**：M1-M4 全部验收、P0/P1/P2.1/P2.2 超出原计划范围完成；每条威胁都有可现场
+运行的测试指认（§5 表）；两处安全级 bug 由自家冒烟抓住并留档——"调试手段即安全设计"
+（同一口令解剖自己的加密 store）。
+
+**未来工作（按价值排序）**：
+1. 真 ENS Provider（测试网 Sepolia 合约调用，替换 AnchorProvider 两函数）；
+2. Waku/libp2p 传输 + 元数据填充（cover traffic）；
+3. tree-KEM 级群密钥树（向 RFC 9420 靠拢）、被踢者显式通知协议；
+4. Rust 协议核心对照实现（`oqs`+`tokio`，内存/性能对比——PLAN 原始选型预案）；
+5. `ink` TUI / 浏览器 add/kick UI、对抗性 fuzz、zeroize、投递 ACK 协议。
+
+## 附录 A · 提交史（16 项，Conventional Commits）
+
+```
+c277222 chore: freeze toolchain        e0bdb0c chore: retire API probe
+61c5d58 feat: M1 static e2ee chat      eb5cbc7 docs: engineering notes(10)
+4ff6183 feat: M2 hybrid PQXDH-lite     ba8ab46 feat: M3 web3 identity layer
+f88c6ac feat: M4 double ratchet        23f23e4 docs: REPORT v1
+9717c17 feat: P0 persistence           ae6092a docs: design decision record
+a09bdb6 feat: P1 mls-lite groups       177398c feat: P1.1 per-message mg-signatures
+0024e3a feat: P1.2 leaf-self seeds     d117469 feat: P2.1 merkle+anchored directory
+acc41f0 feat: P2.2 browser client      （本提交）docs: REPORT 完整版
+```
+
+## 附录 B · 依赖清单（exact pin，TOOLCHAIN.md 权威）
+
+依赖：`@noble/ciphers 2.4.0`、`@noble/curves 2.4.0`、`@noble/hashes 2.4.0`、
+`@noble/post-quantum 0.7.1`、`ws 8.22.1`、`buffer 6.0.3`；
+开发：`typescript 7.0.2`（原生）、`tsx 4.23.15`、`vitest 5.1.0`、`esbuild 0.28.2`、
+`@types/node 26.6.6`、`@types/ws 8.18.2`；平台 Node ≥26（实测 v26.13.0）/ pnpm 12.17.0。
 
 ---
 
-*报告 v1.0 · 2026-11-07 · 由 PLAN/NOTES/TOOLCHAIN 三文档共同支撑的活文档*
+*报告 v2.0（完整版）· 由 PLAN / TOOLCHAIN / NOTES 三文档支撑的活文档；行数与测试数字
+皆为 2026-11-07 工作区实测（`wc -l` / `pnpm test`）。*
