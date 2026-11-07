@@ -1,6 +1,6 @@
 {
   "name": "pqe2e-chat",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Anti-quantum end-to-end encrypted chat (course project): Web3-style identity + hybrid PQXDH + Double Ratchet",
   "license": "MIT",
