@@ -25,6 +25,8 @@ import type { Group, GroupSnapshot, EpochPayload } from '../../src/ggroup.ts';
 import { dirLeafHex, dirLeafCanonicalText, anchorMatch, type AttestedBundle } from '../../src/anchor.ts';
 import { verifyInclusion } from '../../src/merkle.ts';
 import { sealSecure, openSecure } from '../../src/keystore.ts';
+import { useTranslation } from 'react-i18next';
+import i18n from 'i18next';
 
 // ─────────────────────────── 引擎（命令式内核，框架只负责呈现） ───────────────────────────
 
@@ -51,6 +53,7 @@ const persistPending = { current: false };
 // ─────────────────────────── 组件 ───────────────────────────
 
 export function App(): React.ReactElement {
+  const { t } = useTranslation();
   const [connected, setConnected] = useState(false);
   const [log, setLog] = useState<LogRow[]>([]);
   const [roster, setRoster] = useState<Array<{ user: string; session: boolean }>>([]);
@@ -383,10 +386,10 @@ export function App(): React.ReactElement {
     const gid = (gGidRef.current?.value ?? '').trim();
     const name = (gNameRef.current?.value ?? '').trim();
     const members = (gMembersRef.current?.value ?? '').split(',').map((s) => s.trim()).filter((s) => s.length > 0);
-    if (gid.length === 0 || name.length === 0) { pushLog('warn', '*', '#g create 需要 gid 与 name'); return; }
+    if (gid.length === 0 || name.length === 0) { pushLog('warn', '*', t('groupCreate.needGidName')); return; }
     const missing = members.filter((m) => !engine.peerInfo.has(m));
-    if (groupsRef.current.has(gid) || missing.length > 0) {
-      pushLog('warn', '*', `create: 成员须在线; missing: ${missing.join(',')}`); return;
+    if (missing.length > 0) {
+      pushLog('warn', '*', t('groupCreate.missing', { list: missing.join(',') })); return;
     }
     startRoll(gid, name, 1, [...new Set([selfUserRef.current, ...members])].sort(), members);
   }
@@ -396,7 +399,7 @@ export function App(): React.ReactElement {
     const url = (srvRef.current?.value || 'ws://localhost:9090').trim();
     selfUserRef.current = (userRef.current?.value || '').trim();
     devicePassRef.current = passRef.current?.value ?? '';
-    if (selfUserRef.current.length === 0) { pushLog('warn', '*', '需要用户名'); return; }
+    if (selfUserRef.current.length === 0) { pushLog('warn', '*', t('boot.needName')); return; }
     const ident = ensureBrowserIdentity(selfUserRef.current, devicePassRef.current);
     identRef.current = ident;
     const myAtt = makeAttestation({
@@ -441,36 +444,46 @@ export function App(): React.ReactElement {
           <div className="font-semibold text-gray-900 text-lg">pqe2e-chat</div>
           <div className="flex items-center gap-3 text-sm text-gray-600">
             <span className={'w-2 h-2 rounded-sm inline-block ' + (connected ? 'bg-[#0f7b6c]' : 'bg-[#eb5757]')}></span>
-            <span>{connected ? `已连接 · ${selfUserRef.current}` : '未连接'}</span>
+            <span>{connected ? t('nav.connected', { name: selfUserRef.current }) : t('nav.disconnected')}</span>
             <span className="font-mono text-gray-400">{merkle}</span>
+            {/* 语言切换（Notion 克制式：仅背景加深，无位移） */}
+            <div className="flex gap-1">
+              {(['zh', 'en'] as const).map((lng) => (
+                <button key={lng} onClick={() => { document.documentElement.lang = lng; void i18n.changeLanguage(lng); localStorage.setItem('pqe2e.lang', lng); }}
+                  aria-label={`language ${lng}`}
+                  className={'rounded-md px-2 py-1 text-xs transition-colors duration-150 ' + (i18n.language === lng ? 'bg-[#e3e1db] text-gray-900' : 'text-gray-600 hover:bg-[#efedea] active:bg-[#e3e1db]')}>
+                  {lng === 'zh' ? '中' : 'EN'}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </nav>
       <main className="max-w-6xl mx-auto px-4 md:px-6 py-6">
         <section className="bg-white rounded-lg border border-gray-200 p-4 md:p-6">
-          <h1 className="font-semibold text-gray-900 text-xl mb-1">开始会话</h1>
-          <p className="text-sm text-gray-600 mb-4">钱包即身份 · ML-KEM-768 + X25519 混合协商 · Double Ratchet · Merkle 目录校验</p>
+          <h1 className="font-semibold text-gray-900 text-xl mb-1">{t('boot.title')}</h1>
+          <p className="text-sm text-gray-600 mb-4">{t('boot.subtitle')}</p>
           <div className="flex flex-col md:flex-row gap-4">
-            <input ref={srvRef} defaultValue="ws://localhost:9090" placeholder="ws://localhost:9090"
+            <input ref={srvRef} defaultValue="ws://localhost:9090" placeholder={t('boot.srv')} aria-label={t('boot.srv')}
               className="md:w-56 py-1 bg-transparent border-b border-transparent text-gray-900 text-sm focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
-            <input ref={userRef} placeholder="用户名（如 alice）"
+            <input ref={userRef} placeholder={t('boot.username')} aria-label={t('boot.username')}
               className="md:w-40 py-1 bg-transparent border-b border-transparent text-gray-900 text-sm focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
-            <input ref={passRef} type="password" placeholder="设备口令（min 8）"
+            <input ref={passRef} type="password" placeholder={t('boot.pass')} aria-label={t('boot.pass')}
               className="md:w-48 py-1 bg-transparent border-b border-transparent text-gray-900 text-sm focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
             <button onClick={onConnect}
               className="rounded-md text-sm font-medium transition-colors duration-150 bg-[#2eaadc] text-white hover:bg-[#2896c4] active:bg-[#2383e2] px-3 py-1.5">
-              连接
+              {t('boot.connect')}
             </button>
           </div>
         </section>
         <section className="flex flex-col md:flex-row gap-4 mt-4 items-start">
           <aside className="w-full md:w-64 shrink-0 border border-gray-200 rounded-lg bg-[#f7f6f3] overflow-hidden">
-            <div className="px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200">联系人</div>
+            <div className="px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200">{t('side.contacts')}</div>
             <div>
               {selfUserRef.current !== '' && (
                 <div className="group flex items-center gap-2 px-3 py-2 text-sm">
                   <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 text-gray-400 select-none">⋮⋮</span>
-                  <span className="font-semibold">{selfUserRef.current}</span><span className="text-gray-400 text-xs">me</span>
+                  <span className="font-semibold">{selfUserRef.current}</span><span className="text-gray-400 text-xs">{t('side.me')}</span>
                 </div>
               )}
               {roster.map((r) => (
@@ -482,7 +495,7 @@ export function App(): React.ReactElement {
                 </div>
               ))}
             </div>
-            <div className="px-3 py-2 text-xs font-semibold text-gray-500 border-b border-t border-gray-200 mt-2">群组</div>
+            <div className="px-3 py-2 text-xs font-semibold text-gray-500 border-b border-t border-gray-200 mt-2">{t('side.groups')}</div>
             <div>
               {groups.map((g) => (
                 <div key={g.gid} onClick={() => setTarget(`[g]${g.gid}`)}
@@ -492,25 +505,25 @@ export function App(): React.ReactElement {
                   <span className="text-xs text-gray-400">ep{g.ep} · {g.members.length}</span>
                 </div>
               ))}
-              {groups.length === 0 && <div className="px-3 py-2 text-sm text-gray-400">（尚无群 — 创建一个）</div>}
+              {groups.length === 0 && <div className="px-3 py-2 text-sm text-gray-400">{t('side.emptyGroups')}</div>}
             </div>
             <div className="p-3 space-y-2 border-t border-gray-200">
-              <input ref={gGidRef} placeholder="群 id" className="w-full py-1 bg-transparent border-b border-transparent text-sm text-gray-900 focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
-              <input ref={gNameRef} placeholder="群名" className="w-full py-1 bg-transparent border-b border-transparent text-sm text-gray-900 focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
-              <input ref={gMembersRef} placeholder="成员（逗号分隔）" className="w-full py-1 bg-transparent border-b border-transparent text-sm text-gray-900 focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
+              <input ref={gGidRef} placeholder={t('side.gid')} aria-label={t('side.gid')} className="w-full py-1 bg-transparent border-b border-transparent text-sm text-gray-900 focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
+              <input ref={gNameRef} placeholder={t('side.gname')} aria-label={t('side.gname')} className="w-full py-1 bg-transparent border-b border-transparent text-sm text-gray-900 focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
+              <input ref={gMembersRef} placeholder={t('side.members')} aria-label={t('side.members')} className="w-full py-1 bg-transparent border-b border-transparent text-sm text-gray-900 focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
               <button onClick={onCreateGroup}
                 className="w-full rounded-md text-sm font-medium bg-transparent text-[#37352f] hover:bg-[#efedea] active:bg-[#e3e1db] transition-colors duration-150 border border-gray-200 py-1.5">
-                创建群（成员须在线 · 6s roll 窗口）
+                {t('side.create')}
               </button>
             </div>
           </aside>
           <div className="flex-1 w-full bg-white rounded-lg border border-gray-200 flex flex-col h-[60vh] md:h-[560px]">
             <div className="px-4 py-2 border-b border-gray-200 text-sm text-gray-500 flex items-center justify-between">
-              <span>{target === null ? '（未选择会话）' : target.startsWith('[g]') ? `群 ${groupsRef.current.get(target.slice(3))?.name ?? ''}` : target}</span>
-              <span className="font-mono text-xs text-gray-400">端到端密文经不可信中继</span>
+              <span>{target === null ? t('chat.noTarget') : target.startsWith('[g]') ? `${t('side.groups')} ${groupsRef.current.get(target.slice(3))?.name ?? ''}` : target}</span>
+              <span className="font-mono text-xs text-gray-400">{t('chat.e2eNote')}</span>
             </div>
             <div ref={timelineRef} className="flex-1 overflow-y-auto p-2">
-              {shown.length === 0 && <div className="px-3 py-6 text-sm text-gray-400">— 暂无消息 —</div>}
+              {shown.length === 0 && <div className="px-3 py-6 text-sm text-gray-400">{t('chat.empty')}</div>}
               {shown.map((r, i) => (
                 <div key={i} className="flex gap-3 px-3 py-1.5">
                   <span className="text-xs text-gray-400 shrink-0 w-20 font-mono">{r.t}</span>
@@ -521,16 +534,14 @@ export function App(): React.ReactElement {
             </div>
             <div className="p-3 border-t border-gray-200 flex gap-2">
               <input ref={chatRef} onKeyDown={(ev: React.KeyboardEvent<HTMLInputElement>) => { if (ev.key === 'Enter') onSend(); }}
-                placeholder="输入消息 · Enter 发送"
+                placeholder={t('chat.placeholder')} aria-label={t('chat.placeholder')}
                 className="flex-1 py-1.5 bg-transparent border-b border-transparent text-gray-900 text-sm focus:outline-none focus:border-b-2 focus:border-b-[#2383e2] transition-colors duration-150" />
               <button onClick={onSend}
-                className="rounded-md text-sm font-medium transition-colors duration-150 bg-[#2eaadc] text-white hover:bg-[#2896c4] active:bg-[#2383e2] px-4">发送</button>
+                className="rounded-md text-sm font-medium transition-colors duration-150 bg-[#2eaadc] text-white hover:bg-[#2896c4] active:bg-[#2383e2] px-4">{t('chat.send')}</button>
             </div>
           </div>
         </section>
-        <footer className="text-xs text-gray-400 mt-6 pb-8">
-          课程作业演示 · TS 线 · 密码面：FIPS 203/204（noble）· 无服务器信任假设
-        </footer>
+        <footer className="text-xs text-gray-400 mt-6 pb-8">{t('foot')}</footer>
       </main>
     </>
   );
