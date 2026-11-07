@@ -14,12 +14,20 @@ export interface RosterEntry {
   x: string;
   /** ML-KEM-768 预共享公钥（hex，1184B） */
   kem: string;
+  /** ML-DSA-65 公钥（hex） */
+  mld: string;
+  /** 钱包压缩公钥（hex） */
+  w: string;
+  /** wallet ECDSA 签名（hex） */
+  sw: string;
+  /** ML-DSA-65 签名（hex） */
+  sp: string;
 }
 
 export type Wire =
-  | { kind: 'hello'; user: string; x: string; kem: string }
+  | { kind: 'hello'; entry: RosterEntry }
   | { kind: 'dir'; roster: RosterEntry[] }
-  /** M2 混合握手邀请：发起方 → 响应方（响应后发起双端即有同一个会话密钥） */
+  /** M2 混合握手邀请：发起方 → 响应方 */
   | { kind: 'invite'; from: string; to: string; ephX: string; kem: string }
   | { kind: 'msg'; from: string; to: string; nonce: string; ct: string }
   | { kind: 'error'; reason: string };
@@ -34,9 +42,13 @@ export const asText = (b: Uint8Array): string => new TextDecoder().decode(b);
 
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
-const isRoster = (v: unknown): v is RosterEntry[] =>
-  Array.isArray(v) && v.every((e) => typeof e === 'object' && e !== null &&
-    isStr((e as RosterEntry).user) && isStr((e as RosterEntry).x) && isStr((e as RosterEntry).kem));
+const isRosterEntryObj = (e: unknown): e is RosterEntry =>
+  typeof e === 'object' && e !== null && isStr((e as RosterEntry).user)
+  && isStr((e as RosterEntry).x) && isStr((e as RosterEntry).kem)
+  && isStr((e as RosterEntry).mld) && isStr((e as RosterEntry).w)
+  && isStr((e as RosterEntry).sw) && isStr((e as RosterEntry).sp);
+
+const isRoster = (v: unknown): v is RosterEntry[] => Array.isArray(v) && v.every(isRosterEntryObj);
 
 /**
  * 对服务器转来的帧做最基本的结构校验。
@@ -46,7 +58,7 @@ export function parseWire(data: string): Wire {
   const w = JSON.parse(data) as Record<string, unknown>;
   switch (w.kind) {
     case 'hello':
-      if (isStr(w.user) && isStr(w.x) && isStr(w.kem)) return { kind: 'hello', user: w.user, x: w.x, kem: w.kem };
+      if (isRosterEntryObj(w.entry)) return { kind: 'hello', entry: w.entry };
       break;
     case 'dir':
       if (isRoster(w.roster)) return { kind: 'dir', roster: w.roster };

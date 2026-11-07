@@ -1,5 +1,5 @@
 export const PROJECT = {
   name: 'pqe2e-chat',
   planVersion: '0.1',
-  milestone: 'M2-hybrid-pqxdh',
+  milestone: 'M3-attested-web3-identity',
 } as const;

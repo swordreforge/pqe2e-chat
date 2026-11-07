@@ -1,27 +1,27 @@
 /**
- * 中继服务器（M2）：**不可信方**。职责仅：
- *  - hello → 维护在线名单（含 ML-KEM 公钥）→ 广播 dir；
+ * 中继服务器（M3）：**不可信方**。职责仅：
+ *  - hello(完整身份条目) → 维护在线名单 → 广播 dir（目录包括 attestation，但由客户端验证）；
  *  - invite / msg → 按 `to` 字段转发给在线收件人，绝不解析密文与握手包；
- *  掉线即从名单删除并重新广播。
+ *  - 同名连接重连时接管旧 socket（身份真实性由客户端 ML-DSA+wallet 双签承担）。
  * 运行：pnpm server            （默认 ws://localhost:9090）
  */
 import { WebSocketServer, WebSocket } from 'ws';
 import { parseWire } from './codec.js';
+import type { RosterEntry } from './codec.js';
 import { PROJECT } from './version.js';
 
 const PORT = Number(process.env.PORT ?? 9090);
 
 interface Online {
   sock: WebSocket;
-  x: string;
-  kem: string;
+  entry: RosterEntry;
 }
 const roster = new Map<string, Online>();
 
 function broadcastDir(): void {
   const frame = JSON.stringify({
     kind: 'dir',
-    roster: [...roster.entries()].map(([user, e]) => ({ user, x: e.x, kem: e.kem })),
+    roster: [...roster.values()].map((e) => ({ ...e.entry })),
   });
   console.log(`[server] dir updated: ${roster.size} online ${[...roster.keys()].join(',')}`);
   for (const e of roster.values()) if (e.sock.readyState === WebSocket.OPEN) e.sock.send(frame);
@@ -49,14 +49,12 @@ wss.on('connection', (ws) => {
     }
     switch (wire.kind) {
       case 'hello': {
-        const existing = roster.get(wire.user);
+        const existing = roster.get(wire.entry.user);
         if (existing !== undefined) {
-          // 重连接管：同一别名的旧连接（可能已死或未优雅关闭）被新连接顶替。
-          // 身份认证由 M3 的 ML-DSA attestation 承担，接管语义文档化于此。
-          console.log(`[server] takeover: '${wire.user}' reconnects, replacing stale socket`);
+          console.log(`[server] takeover: '${wire.entry.user}' reconnects, replacing stale socket`);
           existing.sock.terminate();
         }
-        roster.set(wire.user, { sock: ws, x: wire.x, kem: wire.kem });
+        roster.set(wire.entry.user, { sock: ws, entry: wire.entry });
         broadcastDir();
         break;
       }

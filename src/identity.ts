@@ -11,6 +11,7 @@ import path from 'node:path';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
+import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 
 export interface Identity {
@@ -18,10 +19,13 @@ export interface Identity {
   /** 静态 X25519（经典侧握手） */
   xSecret: string;
   xPub: string;
-  /** ML-KEM-768 身份预共享密钥（量子侧，hex）。别名 prekey：单独泄露不致命，但应定期轮换 */
+  /** ML-KEM-768 身份预共享密钥（量子侧，hex） */
   kemSecret: string;
   kemPublic: string;
-  /** 模拟钱包（M3 attestation 用） */
+  /** ML-DSA-65 长期签名密钥（PQC 身份层，hex） */
+  mldSecret: string;
+  mldPublic: string;
+  /** 模拟钱包（secp256k1，TOFU 锚定主体，hex） */
   wSecret: string;
   wPub: string;
 }
@@ -34,6 +38,7 @@ export function identityPath(dataDir: string, user: string): string {
 function createIdentity(user: string): Identity {
   const xk = x25519.keygen();
   const kk = ml_kem768.keygen();
+  const mk = ml_dsa65.keygen();
   const wk = secp256k1.keygen();
   return {
     user,
@@ -41,22 +46,26 @@ function createIdentity(user: string): Identity {
     xPub: bytesToHex(xk.publicKey),
     kemSecret: bytesToHex(kk.secretKey),
     kemPublic: bytesToHex(kk.publicKey),
+    mldSecret: bytesToHex(mk.secretKey),
+    mldPublic: bytesToHex(mk.publicKey),
     wSecret: bytesToHex(wk.secretKey),
     wPub: bytesToHex(wk.publicKey),
   };
 }
 
-const KEM_PUB_LEN = 1184; // FIPS 203 ML-KEM-768 ek
-const KEM_SK_LEN = 2400;  // FIPS 203 ML-KEM-768 dk
-const X_PUB_LEN = 64;     // hex 字符数（32B）
+const IDENTITY_KEYS: Record<keyof Omit<Identity, 'user'>, number> = {
+  xSecret: 64, xPub: 64,
+  kemSecret: 2400 * 2, kemPublic: 1184 * 2,
+  mldSecret: 4032 * 2, mldPublic: 1952 * 2,
+  wSecret: 64, wPub: 66,
+};
 
 function isValidIdentityShape(raw: Partial<Identity>): boolean {
-  return raw.user === undefined
-    || (typeof raw.xSecret === 'string' && raw.xSecret.length === 64
-      && typeof raw.xPub === 'string' && raw.xPub.length === X_PUB_LEN
-      && typeof raw.kemSecret === 'string' && raw.kemSecret.length === KEM_SK_LEN * 2
-      && typeof raw.kemPublic === 'string' && raw.kemPublic.length === KEM_PUB_LEN * 2
-      && typeof raw.wSecret === 'string' && typeof raw.wPub === 'string');
+  for (const key of Object.keys(IDENTITY_KEYS) as Array<keyof typeof IDENTITY_KEYS>) {
+    const v = raw[key];
+    if (typeof v !== 'string' || v.length !== IDENTITY_KEYS[key]) return false;
+  }
+  return true;
 }
 
 /** 存在则加载；否则生成并落盘。返回的密钥材料永不进日志。 */
@@ -71,6 +80,8 @@ export function loadOrCreateIdentity(dataDir: string, user: string): Identity {
         xPub: raw.xPub as string,
         kemSecret: raw.kemSecret as string,
         kemPublic: raw.kemPublic as string,
+        mldSecret: raw.mldSecret as string,
+        mldPublic: raw.mldPublic as string,
         wSecret: raw.wSecret as string,
         wPub: raw.wPub as string,
       };
