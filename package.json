@@ -1,0 +1,30 @@
+{
+  "name": "pqe2e-chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Anti-quantum end-to-end encrypted chat (course project): Web3-style identity + hybrid PQXDH + Double Ratchet",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "server": "tsx src/server.ts",
+    "client": "tsx src/client.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@noble/post-quantum": "0.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}
