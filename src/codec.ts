@@ -29,7 +29,8 @@ export type Wire =
   | { kind: 'dir'; roster: RosterEntry[] }
   /** M2 混合握手邀请：发起方 → 响应方 */
   | { kind: 'invite'; from: string; to: string; ephX: string; kem: string }
-  | { kind: 'msg'; from: string; to: string; nonce: string; ct: string }
+  /** M4 棘轮帧：每条消息独立轮换密钥 */
+  | { kind: 'msg'; from: string; to: string; v: 4; seq: number; nonce: string; ct: string }
   | { kind: 'error'; reason: string };
 
 export const b64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString('base64');
@@ -50,6 +51,8 @@ const isRosterEntryObj = (e: unknown): e is RosterEntry =>
 
 const isRoster = (v: unknown): v is RosterEntry[] => Array.isArray(v) && v.every(isRosterEntryObj);
 
+const isSafeSeq = (seq: unknown): seq is number => typeof seq === 'number' && Number.isInteger(seq) && seq >= 0 && seq < 2 ** 32;
+
 /**
  * 对服务器转来的帧做最基本的结构校验。
  * 服务器不可信：这里只保证"结构可解析"，不保证"内容可信"。
@@ -69,8 +72,8 @@ export function parseWire(data: string): Wire {
       }
       break;
     case 'msg':
-      if (isStr(w.from) && isStr(w.to) && isStr(w.nonce) && isStr(w.ct)) {
-        return { kind: 'msg', from: w.from, to: w.to, nonce: w.nonce, ct: w.ct };
+      if (isStr(w.from) && isStr(w.to) && w.v === 4 && isSafeSeq(w.seq) && isStr(w.nonce) && isStr(w.ct)) {
+        return { kind: 'msg', from: w.from, to: w.to, v: 4, seq: w.seq, nonce: w.nonce, ct: w.ct };
       }
       break;
     case 'error':

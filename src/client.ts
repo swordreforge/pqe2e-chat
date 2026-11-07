@@ -13,12 +13,8 @@ import readline from 'node:readline/promises';
 import { createHash } from 'node:crypto';
 import { loadOrCreateIdentity } from './identity.js';
 import { parseWire } from './codec.js';
-import {
-  initiatorHandshake,
-  responderHandshake,
-  sealMessage,
-  openMessage,
-} from './channel.js';
+import { initiatorHandshake, responderHandshake } from './channel.js';
+import { M4Channel } from './m4.js';
 import { makeAttestation, verifyAttestation } from './attestation.js';
 import { TofuTrust } from './trust.js';
 
@@ -53,8 +49,8 @@ const trust = new TofuTrust(DATA_DIR);
  * 与之相关的 invite/msg 一律视作攻击面。
  */
 const peerInfo = new Map<string, { x: string; kem: string }>();
-/** 已建立会话：peer → 会话密钥 */
-const sessions = new Map<string, Uint8Array>();
+/** 已建立会话：peer → M4 棘轮通道（根密钥来自 M2 混合 PQXDH-lite 握手） */
+const sessions = new Map<string, M4Channel>();
 
 const ws = new WebSocket(SERVER_URL);
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -76,14 +72,14 @@ ws.on('error', (e) => {
  */
 function ensureSession(peer: string, force = false): Uint8Array | null {
   const cached = sessions.get(peer);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) return null;
   const info = peerInfo.get(peer);
   if (info === undefined) return null;
   if (selfUser >= peer && !force) return null; // 等对方发起
   const est = initiatorHandshake(info.x, info.kem, selfUser, peer);
-  sessions.set(peer, est.key);
+  sessions.set(peer, new M4Channel(est.key, selfUser, peer));
   ws.send(JSON.stringify({ kind: 'invite', from: selfUser, to: peer, ephX: est.invite.ephX, kem: est.invite.kem }));
-  console.log(`[chat]   pq-session ${selfUser}↔${peer} established (tag ${KEY_TAG(est.key)}…, invite sent)`);
+  console.log(`[chat]   pq-session ${selfUser}↔${peer} established (root tag ${KEY_TAG(est.key)}…, invite sent)`);
   return est.key;
 }
 
@@ -138,8 +134,8 @@ ws.on('message', (raw) => {
       if (!peerInfo.has(wire.from)) break; // 未上线者不可信
       try {
         const key = responderHandshake(ident.xSecret, ident.kemSecret, wire, wire.from, wire.to);
-        sessions.set(wire.from, key);
-        console.log(`[chat]   pq-session ${wire.from}↔${selfUser} accepted (tag ${KEY_TAG(key)}…)`);
+        sessions.set(wire.from, new M4Channel(key, selfUser, wire.from));
+        console.log(`[chat]   pq-session ${wire.from}↔${selfUser} accepted (root tag ${KEY_TAG(key)}…)`);
       } catch {
         console.log(`[chat]   <pq handshake from ${wire.from} failed — invite corrupt/untrusted>`);
       }
@@ -147,17 +143,17 @@ ws.on('message', (raw) => {
     }
     case 'msg': {
       if (wire.to !== selfUser) break; // 不是给我的，静默
-      const key = sessions.get(wire.from);
-      if (key === undefined) {
-        console.log(`[chat]   <no session with ${wire.from}; force-rehandshaking, that message is lost>`);
+      const chan = sessions.get(wire.from);
+      if (chan === undefined) {
+        console.log(`[chat]   <no pq session with ${wire.from}; force-rehandshaking, that message is lost>`);
         void ensureSession(wire.from, true);
         break;
       }
       try {
-        const text = openMessage(key, wire.from, wire.to, wire);
-        console.log(`  [${wire.from}] ${text}`);
+        const text = chan.open(wire, wire.from, wire.to);
+        console.log(`  [${wire.from}] #${wire.seq} ${text}`);
       } catch {
-        console.log(`  [${wire.from}] <ciphertext undecryptable/tampered — treat channel data as untrusted>`);
+        console.log(`  [${wire.from}] <dropped ciphertext (seq=${wire.seq}) — tampered/replayed/out-of-window>`);
       }
       break;
     }
@@ -178,13 +174,15 @@ rl.on('line', (line) => {
     return;
   }
   for (const peer of peerInfo.keys()) {
-    const key = ensureSession(peer);
-    if (key === null) {
+    const established = ensureSession(peer);
+    if (established === null && !sessions.has(peer)) {
       console.log(`[chat]   (${peer}: awaiting handshake invite)`);
       continue;
     }
-    const sealed = sealMessage(key, selfUser, peer, text);
-    ws.send(JSON.stringify({ kind: 'msg', from: selfUser, to: peer, nonce: sealed.nonce, ct: sealed.ct }));
+    const chan = sessions.get(peer);
+    if (chan === undefined) continue;
+    const f = chan.seal(text, selfUser, peer);
+    ws.send(JSON.stringify({ kind: 'msg', from: selfUser, to: peer, v: 4, seq: f.seq, nonce: f.nonce, ct: f.ct }));
   }
 });
 
